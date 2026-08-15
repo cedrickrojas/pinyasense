@@ -1,0 +1,47 @@
+# Flask Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+Werkzeug==3.0.1
+
+# Image Processing
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+Pillow==10.1.0
+numpy==1.24.3
+
+# Machine Learning
+torch==2.1.0
+torchvision==0.16.0
+tensorflow>=2.13.0
+scikit-learn>=1.3.0
+
+# Model Training
+tqdm>=4.66.0
+
+# YOLOv8 Object Detection
+ultralytics>=8.0.0
+pyyaml>=6.0
+
+# Firebase Integration
+firebase-admin>=6.0.0
+
+# SMS Notifications
+twilio>=9.0.0
+
+# PDF & Report Generation
+reportlab>=4.0.0
+
+# Scheduling
+APScheduler>=3.10.1
+
+# Utilities
+python-dateutil==2.8.2
+
+# Development
+python-dotenv==1.0.0
+
+# Sensor Libraries (for Raspberry Pi GPIO)
+# Uncomment if running on actual Raspberry Pi with sensors
+# RPi.GPIO==0.7.1
+# Adafruit-DHT==1.4.0
+# spidev==3.6  # For ADC (e.g., MCP3008)

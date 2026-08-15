@@ -1,0 +1,19 @@
+[Unit]
+Description=AgriPinya - Pineapple Disease Detection System
+After=network.target
+
+[Service]
+Type=simple
+User=voicebrain
+WorkingDirectory=/home/voicebrain/agripinya
+Environment="PATH=/home/voicebrain/agripinya/venv/bin"
+Environment="WATER_PUMP_PIN=27"
+Environment="WATER_PUMP_ACTIVE_LOW=0"
+Environment="WATER_PUMP_BREAKER_REQUIRED=0"
+Environment="DHT_PIN=4"
+ExecStart=/home/voicebrain/agripinya/venv/bin/python app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

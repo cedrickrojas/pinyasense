@@ -1,0 +1,21 @@
+{
+  "name": "PinaSense",
+  "short_name": "PinaSense",
+  "description": "Smart pineapple disease detection and farm monitoring",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "categories": ["productivity", "utilities", "education"],
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/static/icons/pinya-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

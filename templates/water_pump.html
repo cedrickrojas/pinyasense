@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PinaSense">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
+    <title>Water Pump - AgriPinya</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .pump-container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        .pump-card {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 30px;
+            box-shadow: var(--box-shadow);
+        }
+
+        .pump-status {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 18px;
+            border-radius: 999px;
+            font-weight: 700;
+        }
+
+        .status-on {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-off {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-meta {
+            color: #666;
+            font-size: 0.95rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .mini-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.05);
+        }
+
+        .section-label {
+            margin: 0 0 8px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 0.76rem;
+            font-weight: 800;
+        }
+
+        .mini-card h3 {
+            margin: 0 0 10px;
+            color: #0f172a;
+        }
+
+        .mini-card p {
+            margin: 0;
+            color: #475569;
+            line-height: 1.6;
+        }
+
+        .schedule-form {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .field-group label {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        .field-group input,
+        .field-group select {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
+            background: #fff;
+            color: #0f172a;
+        }
+
+        .field-note {
+            font-size: 0.82rem;
+            color: #64748b;
+        }
+
+        .schedule-list {
+            display: grid;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .schedule-item {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px;
+            border-radius: 18px;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+        }
+
+        .schedule-item h4 {
+            margin: 0 0 4px;
+            color: #0f172a;
+        }
+
+        .schedule-meta {
+            margin-top: 6px;
+            color: #64748b;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 0.76rem;
+            font-weight: 800;
+        }
+
+        .badge-success {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-muted {
+            background: #e2e8f0;
+            color: #475569;
+        }
+
+        .schedule-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-top: 12px;
+        }
+
+        .prediction-result {
+            margin-top: 18px;
+            padding: 18px;
+            border-radius: 18px;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+        }
+
+        .prediction-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .stat-box {
+            padding: 14px;
+            border-radius: 14px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        .stat-label {
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #64748b;
+        }
+
+        .stat-value {
+            margin-top: 4px;
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #0f172a;
+        }
+
+        .warning-box {
+            margin-top: 12px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            background: #fff7ed;
+            color: #9a3412;
+            border: 1px solid #fed7aa;
+        }
+
+        .info-box {
+            margin-top: 12px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            background: #ecfeff;
+            color: #155e75;
+            border: 1px solid #a5f3fc;
+        }
+
+        .empty-state {
+            padding: 18px;
+            border-radius: 14px;
+            border: 1px dashed #cbd5e1;
+            color: #64748b;
+            background: #fff;
+        }
+
+        .error-box {
+            margin-top: 18px;
+            padding: 14px 16px;
+            border-radius: 12px;
+            background: #fff3cd;
+            color: #856404;
+            display: none;
+        }
+
+        @media (max-width: 520px) {
+            .controls .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        .chart-card {
+            margin-top: 20px;
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 24px;
+            box-shadow: var(--card-shadow);
+        }
+
+        .chart-card h3 {
+            margin: 0 0 20px;
+            color: var(--dark-color);
+        }
+
+        .chart-card canvas {
+            max-width: 100% !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Toggle Button (Mobile) -->
+    <button class="sidebar-toggle" onclick="toggleSidebar()">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <a href="/dashboard" class="sidebar-logo">
+                <i class="fas fa-leaf"></i>
+                <span data-i18n="brand">AgriPinya</span>
+            </a>
+            <div class="language-selector">
+                <select id="languageSelect" onchange="changeLanguage()">
+                    <option value="en">English</option>
+                    <option value="tl">Tagalog</option>
+                    <option value="es">Español</option>
+                </select>
+            </div>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
+            <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
+            <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
+            <li><a href="/sensors/water-pump" class="active"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <div class="sidebar-section">Agriculture</div>
+            <li><a href="/forecast"><i class="fas fa-chart-line"></i> Forecast</a></li>
+            <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
+            <div class="sidebar-section">System</div>
+            <li><a href="/about"><i class="fas fa-info-circle"></i> About</a></li>
+        </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-wrapper">
+        <header class="hero" style="padding: 2rem 0;">
+            <div class="container">
+                <h1 data-i18n="water_pump_title"><i class="fas fa-faucet-drip"></i> Water Pump</h1>
+                <p data-i18n="water_pump_subtitle">Turn irrigation pump on or off</p>
+            </div>
+        </header>
+
+        <div class="pump-container">
+            <div class="pump-card">
+                <h2 data-i18n="pump_status">Pump Status</h2>
+
+                <div class="pump-status">
+                    <div id="statusPill" class="status-pill status-off">
+                        <i class="fas fa-power-off"></i>
+                        <span id="statusText">OFF</span>
+                    </div>
+                    <div class="status-meta" id="statusMeta">--</div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn btn-success" id="btnOn" onclick="pumpOn()">
+                        <i class="fas fa-toggle-on"></i> <span data-i18n="pump_on">ON</span>
+                    </button>
+                    <button class="btn btn-secondary" id="btnOff" onclick="pumpOff()">
+                        <i class="fas fa-toggle-off"></i> <span data-i18n="pump_off">OFF</span>
+                    </button>
+                    <button class="btn btn-primary" id="btnRun" onclick="pumpRun()">
+                        <i class="fas fa-stopwatch"></i> <span data-i18n="run_pump">Run 2s</span>
+                    </button>
+                    <button class="btn btn-secondary" id="btnRefresh" onclick="refreshStatus()">
+                        <i class="fas fa-sync"></i> <span data-i18n="refresh">Refresh</span>
+                    </button>
+                </div>
+
+                <div id="errorBox" class="error-box"></div>
+            </div>
+
+            <div class="feature-grid">
+                <div class="mini-card">
+                    <p class="section-label">Smart irrigation</p>
+                    <h3>Watering schedule</h3>
+                    <p>Set watering every morning or on selected days like Monday, Wednesday, and Friday.</p>
+
+                    <div class="schedule-form">
+                        <div class="field-group">
+                            <label for="scheduleName">Schedule name</label>
+                            <input id="scheduleName" type="text" value="Morning watering" placeholder="Morning watering">
+                        </div>
+                        <div class="field-group">
+                            <label for="scheduleType">Schedule type</label>
+                            <select id="scheduleType">
+                                <option value="daily">Every day</option>
+                                <option value="weekly">Specific days</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label for="scheduleTime">Time</label>
+                            <input id="scheduleTime" type="time" value="06:00">
+                        </div>
+                        <div class="field-group">
+                            <label for="scheduleDuration">Duration (seconds)</label>
+                            <input id="scheduleDuration" type="number" min="1" value="5">
+                        </div>
+                        <div class="field-group full-width">
+                            <label for="scheduleDays">Days of week</label>
+                            <select id="scheduleDays" multiple size="4">
+                                <option value="mon">Monday</option>
+                                <option value="wed">Wednesday</option>
+                                <option value="fri">Friday</option>
+                                <option value="tue">Tuesday</option>
+                                <option value="thu">Thursday</option>
+                                <option value="sat">Saturday</option>
+                                <option value="sun">Sunday</option>
+                            </select>
+                            <div class="field-note">Hold Ctrl or Cmd to choose multiple days.</div>
+                        </div>
+                        <div class="field-group full-width">
+                            <button class="btn btn-primary" id="btnCreateSchedule" type="button" onclick="createSchedule()">
+                                <i class="fas fa-calendar-plus"></i> Save schedule
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="scheduleErrorBox" class="error-box"></div>
+                    <div id="scheduleSummary" class="info-box">No watering schedules yet.</div>
+                    <div id="scheduleList" class="schedule-list"></div>
+
+                    <div class="chart-card">
+                        <h3><i class="fas fa-chart-line"></i> Watering Duration per Day</h3>
+                        <canvas id="wateringScheduleChart" style="display: none;"></canvas>
+                        <div id="wateringChartEmpty" class="empty-state">No enabled watering schedules yet.</div>
+                    </div>
+                </div>
+
+                <div class="mini-card">
+                    <p class="section-label">Growth monitoring</p>
+                    <h3>3-month prediction</h3>
+                    <p>Check whether a pineapple plant is on track to reach the expected size after 90 days.</p>
+
+                    <div class="schedule-form">
+                        <div class="field-group">
+                            <label for="plantingDate">Planting date</label>
+                            <input id="plantingDate" type="date">
+                        </div>
+                        <div class="field-group">
+                            <label for="actualHeight">Current height (cm)</label>
+                            <input id="actualHeight" type="number" min="0" step="0.1" placeholder="Optional">
+                        </div>
+                        <div class="field-group full-width">
+                            <label for="actualCanopy">Current canopy spread (cm)</label>
+                            <input id="actualCanopy" type="number" min="0" step="0.1" placeholder="Optional">
+                        </div>
+                        <div class="field-group full-width">
+                            <button class="btn btn-primary" id="btnPredictGrowth" type="button" onclick="loadGrowthPrediction()">
+                                <i class="fas fa-chart-line"></i> Check prediction
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="predictionErrorBox" class="error-box"></div>
+                    <div id="predictionResult" class="prediction-result">
+                        <div class="empty-state">No growth prediction loaded yet.</div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h3><i class="fas fa-chart-line"></i> Height vs. 90-Day Target</h3>
+                        <canvas id="growthTrajectoryChart" style="display: none;"></canvas>
+                        <div id="growthTrajectoryEmpty" class="empty-state">No growth prediction loaded yet.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+        let refreshTimer;
+
+        function setBusy(isBusy) {
+            ['btnOn', 'btnOff', 'btnRun', 'btnRefresh', 'btnCreateSchedule', 'btnPredictGrowth'].forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) btn.disabled = isBusy;
+            });
+        }
+
+        function showError(message) {
+            const box = document.getElementById('errorBox');
+            if (!box) return;
+            if (!message) {
+                box.style.display = 'none';
+                box.textContent = '';
+                return;
+            }
+            box.style.display = 'block';
+            box.textContent = message;
+        }
+
+        function showSectionError(boxId, message) {
+            const box = document.getElementById(boxId);
+            if (!box) return;
+            if (!message) {
+                box.style.display = 'none';
+                box.textContent = '';
+                return;
+            }
+            box.style.display = 'block';
+            box.textContent = message;
+        }
+
+        function setDefaultPlantingDate() {
+            const input = document.getElementById('plantingDate');
+            if (!input || input.value) return;
+
+            const date = new Date();
+            date.setDate(date.getDate() - 90);
+            input.value = date.toISOString().slice(0, 10);
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '--';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return value;
+            return date.toLocaleString();
+        }
+
+        function formatDaysOfWeek(days) {
+            const labels = {
+                mon: 'Monday',
+                tue: 'Tuesday',
+                wed: 'Wednesday',
+                thu: 'Thursday',
+                fri: 'Friday',
+                sat: 'Saturday',
+                sun: 'Sunday',
+            };
+            return (Array.isArray(days) ? days : []).map(day => labels[day] || day).join(', ');
+        }
+
+        function getSelectedScheduleDays() {
+            const select = document.getElementById('scheduleDays');
+            if (!select) return [];
+            return Array.from(select.selectedOptions).map(option => option.value);
+        }
+
+        function renderSchedules(payload) {
+            const list = document.getElementById('scheduleList');
+            const summary = document.getElementById('scheduleSummary');
+            if (!list) return;
+
+            const schedules = payload && Array.isArray(payload.schedules) ? payload.schedules : [];
+            const schedulerAvailable = !!(payload && payload.scheduler_available);
+
+            renderWateringScheduleChart(payload);
+
+            if (summary) {
+                summary.textContent = schedulerAvailable
+                    ? `${schedules.length} saved watering schedule${schedules.length === 1 ? '' : 's'} available.`
+                    : 'Schedules are saved, but APScheduler is unavailable so they will not run automatically.';
+            }
+
+            if (!schedules.length) {
+                list.innerHTML = '<div class="empty-state">No watering schedules yet.</div>';
+                return;
+            }
+
+            list.innerHTML = schedules.map(schedule => {
+                const enabled = !!schedule.enabled;
+                const dayLabel = schedule.schedule_type === 'weekly'
+                    ? formatDaysOfWeek(schedule.days_of_week)
+                    : 'Every day';
+                const nextRun = schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '--';
+                const lastRun = schedule.last_run_at ? formatDateTime(schedule.last_run_at) : '--';
+
+                return `
+                    <div class="schedule-item">
+                        <div>
+                            <h4>${schedule.name || 'Scheduled watering'}</h4>
+                            <div class="schedule-meta">
+                                <div><strong>Time:</strong> ${schedule.time || '--'} | <strong>Duration:</strong> ${schedule.duration_seconds || '--'}s</div>
+                                <div><strong>Days:</strong> ${dayLabel}</div>
+                                <div><strong>Next run:</strong> ${nextRun}</div>
+                                <div><strong>Last run:</strong> ${lastRun}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="badge ${enabled ? 'badge-success' : 'badge-muted'}">
+                                <i class="fas fa-${enabled ? 'check-circle' : 'pause-circle'}"></i>
+                                ${enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                            <div class="schedule-actions">
+                                <button class="btn btn-secondary" type="button" onclick="deleteSchedule('${schedule.id}')">
+                                    <i class="fas fa-trash"></i> Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadSchedules() {
+            setBusy(true);
+            showSectionError('scheduleErrorBox', '');
+            try {
+                const res = await fetch('/api/water-pump/schedules');
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to load watering schedules');
+                }
+                renderSchedules(data);
+            } catch (e) {
+                showSectionError('scheduleErrorBox', e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function createSchedule() {
+            setBusy(true);
+            showSectionError('scheduleErrorBox', '');
+            try {
+                const name = document.getElementById('scheduleName').value.trim() || 'Scheduled watering';
+                const scheduleType = document.getElementById('scheduleType').value;
+                const time = document.getElementById('scheduleTime').value || '06:00';
+                const durationSeconds = parseInt(document.getElementById('scheduleDuration').value || '5', 10);
+                const daysOfWeek = getSelectedScheduleDays();
+
+                const res = await fetch('/api/water-pump/schedules', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        schedule_type: scheduleType,
+                        time,
+                        duration_seconds: durationSeconds,
+                        days_of_week: daysOfWeek,
+                        enabled: true,
+                    }),
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to save schedule');
+                }
+
+                await loadSchedules();
+            } catch (e) {
+                showSectionError('scheduleErrorBox', e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function deleteSchedule(scheduleId) {
+            setBusy(true);
+            showSectionError('scheduleErrorBox', '');
+            try {
+                const res = await fetch(`/api/water-pump/schedules/${scheduleId}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to delete schedule');
+                }
+
+                await loadSchedules();
+            } catch (e) {
+                showSectionError('scheduleErrorBox', e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        function formatValueOrDash(value, suffix = '') {
+            if (value === null || value === undefined || value === '') return '--';
+            return `${value}${suffix}`;
+        }
+
+        let growthTrajectoryChart;
+
+        const GROWTH_STATUS_COLOR = {
+            on_track: '#10b981',
+            below_expected: '#ef4444',
+            slow_growth_risk: '#f59e0b',
+        };
+
+        function expectedHeightForDay(days) {
+            const early = Math.min(days, 90);
+            const late = Math.max(0, days - 90);
+            return 12.0 + (early * 0.26) + (late * 0.10);
+        }
+
+        function renderGrowthTrajectoryChart(summary) {
+            const canvas = document.getElementById('growthTrajectoryChart');
+            const emptyState = document.getElementById('growthTrajectoryEmpty');
+            if (!canvas) return;
+
+            const size = summary && summary.size_prediction;
+            const daysSincePlanting = summary && typeof summary.days_since_planting === 'number'
+                ? summary.days_since_planting
+                : null;
+
+            if (!size || daysSincePlanting === null) {
+                if (growthTrajectoryChart) {
+                    growthTrajectoryChart.destroy();
+                    growthTrajectoryChart = null;
+                }
+                canvas.style.display = 'none';
+                if (emptyState) emptyState.style.display = 'block';
+                return;
+            }
+
+            canvas.style.display = 'block';
+            if (emptyState) emptyState.style.display = 'none';
+
+            const targetRange = Array.isArray(size.target_90_day_height_range_cm) ? size.target_90_day_height_range_cm : [];
+            const maxDay = Math.max(120, daysSincePlanting + 20, 100);
+
+            const curvePoints = [];
+            for (let d = 0; d <= maxDay; d += Math.max(1, Math.round(maxDay / 40))) {
+                curvePoints.push({ x: d, y: Math.round(expectedHeightForDay(d) * 10) / 10 });
+            }
+            curvePoints.push({ x: maxDay, y: Math.round(expectedHeightForDay(maxDay) * 10) / 10 });
+
+            const statusColor = GROWTH_STATUS_COLOR[size.growth_status] || GROWTH_STATUS_COLOR.on_track;
+            const todayY = size.actual_height_cm !== null && size.actual_height_cm !== undefined
+                ? size.actual_height_cm
+                : size.current_expected_height_cm;
+
+            const datasets = [];
+
+            if (targetRange.length === 2) {
+                const bandMin = Math.max(0, 90 - Math.min(15, maxDay * 0.15));
+                const bandMax = Math.min(maxDay, 90 + Math.min(15, maxDay * 0.15));
+                datasets.push({
+                    label: '90-day target (max)',
+                    data: [{ x: bandMin, y: targetRange[1] }, { x: bandMax, y: targetRange[1] }],
+                    borderColor: 'rgba(100, 116, 139, 0.4)',
+                    backgroundColor: 'rgba(100, 116, 139, 0.14)',
+                    borderWidth: 1,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    fill: '+1',
+                    order: 3,
+                });
+                datasets.push({
+                    label: '90-day target (min)',
+                    data: [{ x: bandMin, y: targetRange[0] }, { x: bandMax, y: targetRange[0] }],
+                    borderColor: 'rgba(100, 116, 139, 0.4)',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    fill: false,
+                    order: 3,
+                });
+            }
+
+            datasets.push({
+                label: 'Expected height (cm)',
+                data: curvePoints,
+                borderColor: 'rgb(46, 204, 113)',
+                backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.4,
+                fill: true,
+                order: 2,
+            });
+
+            datasets.push({
+                label: size.actual_height_cm !== null && size.actual_height_cm !== undefined ? 'Measured height (today)' : 'Expected height (today)',
+                data: [{ x: daysSincePlanting, y: todayY }],
+                showLine: false,
+                pointRadius: 6,
+                pointHoverRadius: 7,
+                pointBackgroundColor: statusColor,
+                pointBorderColor: '#ffffff',
+                pointBorderWidth: 2,
+                order: 1,
+            });
+
+            const ctx = canvas.getContext('2d');
+            if (growthTrajectoryChart) {
+                growthTrajectoryChart.destroy();
+            }
+
+            growthTrajectoryChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            labels: {
+                                filter: (item) => item.text !== '90-day target (min)',
+                            },
+                        },
+                        tooltip: {
+                            mode: 'nearest',
+                            intersect: true,
+                            callbacks: {
+                                label: (item) => `${item.dataset.label}: ${item.parsed.y} cm (day ${item.parsed.x})`,
+                            },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Days Since Planting',
+                            },
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Height (cm)',
+                            },
+                        },
+                    },
+                },
+            });
+        }
+
+        let wateringScheduleChart;
+        const DAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+        const DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+
+        function renderWateringScheduleChart(payload) {
+            const canvas = document.getElementById('wateringScheduleChart');
+            const emptyState = document.getElementById('wateringChartEmpty');
+            if (!canvas) return;
+
+            const schedules = (payload && Array.isArray(payload.schedules) ? payload.schedules : [])
+                .filter(schedule => schedule.enabled);
+
+            const totals = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 };
+            schedules.forEach(schedule => {
+                const days = schedule.schedule_type === 'weekly' && Array.isArray(schedule.days_of_week)
+                    ? schedule.days_of_week
+                    : DAY_ORDER;
+                days.forEach(day => {
+                    if (totals[day] !== undefined) {
+                        totals[day] += Number(schedule.duration_seconds) || 0;
+                    }
+                });
+            });
+
+            const hasData = Object.values(totals).some(v => v > 0);
+
+            if (!hasData) {
+                if (wateringScheduleChart) {
+                    wateringScheduleChart.destroy();
+                    wateringScheduleChart = null;
+                }
+                canvas.style.display = 'none';
+                if (emptyState) emptyState.style.display = 'block';
+                return;
+            }
+
+            canvas.style.display = 'block';
+            if (emptyState) emptyState.style.display = 'none';
+
+            const ctx = canvas.getContext('2d');
+            if (wateringScheduleChart) {
+                wateringScheduleChart.destroy();
+            }
+
+            wateringScheduleChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: DAY_ORDER.map(day => DAY_LABELS[day]),
+                    datasets: [{
+                        label: 'Watering Duration (s)',
+                        data: DAY_ORDER.map(day => totals[day]),
+                        borderColor: 'rgb(46, 204, 113)',
+                        backgroundColor: 'rgba(46, 204, 113, 0.6)',
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        maxBarThickness: 36,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2,
+                    plugins: {
+                        legend: {
+                            display: true,
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Duration (s)' },
+                        },
+                        x: {
+                            title: { display: true, text: 'Day of Week' },
+                        },
+                    },
+                },
+            });
+        }
+
+        async function loadGrowthPrediction() {
+            setBusy(true);
+            showSectionError('predictionErrorBox', '');
+            try {
+                const plantingDate = document.getElementById('plantingDate').value;
+                const actualHeight = document.getElementById('actualHeight').value;
+                const actualCanopy = document.getElementById('actualCanopy').value;
+
+                const params = new URLSearchParams({
+                    horizon_days: '30',
+                    history_days: '90',
+                    profile: 'standard',
+                });
+
+                if (plantingDate) params.set('planting_date', plantingDate);
+                if (actualHeight) params.set('actual_height_cm', actualHeight);
+                if (actualCanopy) params.set('actual_canopy_cm', actualCanopy);
+
+                const res = await fetch(`/api/forecast/growth-harvest?${params.toString()}`);
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to load growth prediction');
+                }
+
+                const summary = data.summary || {};
+                const size = summary.size_prediction || {};
+                const cycles = summary.productive_harvest_cycles || {};
+                const targetRange = Array.isArray(size.target_90_day_height_range_cm) ? size.target_90_day_height_range_cm : [];
+                const canopyRange = Array.isArray(size.target_90_day_canopy_range_cm) ? size.target_90_day_canopy_range_cm : [];
+                const expectedHeight = formatValueOrDash(size.current_expected_height_cm, ' cm');
+                const targetHeight = targetRange.length === 2 ? `${targetRange[0]} - ${targetRange[1]} cm` : formatValueOrDash(size.target_90_day_height_cm, ' cm');
+                const targetCanopy = canopyRange.length === 2 ? `${canopyRange[0]} - ${canopyRange[1]} cm` : formatValueOrDash(size.target_90_day_canopy_cm, ' cm');
+
+                const resultHtml = `
+                    <div class="prediction-grid">
+                        <div class="stat-box">
+                            <div class="stat-label">Expected now</div>
+                            <div class="stat-value">${expectedHeight}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">90-day target</div>
+                            <div class="stat-value">${targetHeight}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Canopy target</div>
+                            <div class="stat-value">${targetCanopy}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Growth status</div>
+                            <div class="stat-value">${size.growth_status || 'on_track'}</div>
+                        </div>
+                    </div>
+                    <div class="schedule-meta" style="margin-top: 14px;">
+                        <div><strong>Predicted stage:</strong> ${summary.predicted_growth_stage || '--'}</div>
+                        <div><strong>Optimal harvest:</strong> ${summary.optimal_harvest_date || '--'}</div>
+                        <div><strong>Good-quality cycles:</strong> ${cycles.good_quality_cycles ?? 2}</div>
+                    </div>
+                    ${size.growth_alert ? `<div class="warning-box"><strong>Possible problem:</strong> ${size.growth_alert}</div>` : ''}
+                    ${cycles.note ? `<div class="info-box">${cycles.note}</div>` : ''}
+                    ${size.problem_signals && size.problem_signals.length ? `<div class="info-box"><strong>Signals:</strong> ${size.problem_signals.join(' ')}</div>` : ''}
+                `;
+
+                const resultBox = document.getElementById('predictionResult');
+                if (resultBox) {
+                    resultBox.innerHTML = resultHtml;
+                }
+
+                renderGrowthTrajectoryChart(summary);
+            } catch (e) {
+                showSectionError('predictionErrorBox', e.message);
+                renderGrowthTrajectoryChart(null);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        function renderStatus(data) {
+            const pill = document.getElementById('statusPill');
+            const statusText = document.getElementById('statusText');
+            const meta = document.getElementById('statusMeta');
+
+            const i18nText = (key, fallback) => {
+                const el = document.querySelector(`[data-i18n="${key}"]`);
+                const text = el ? (el.textContent || '').trim() : '';
+                return text || fallback;
+            };
+
+            const isOn = (data && data.status === 'on');
+            if (pill) {
+                pill.classList.toggle('status-on', isOn);
+                pill.classList.toggle('status-off', !isOn);
+            }
+            if (statusText) {
+                statusText.textContent = isOn ? i18nText('pump_on', 'ON') : i18nText('pump_off', 'OFF');
+            }
+            if (meta) {
+                const gpio = data && data.gpio_pin != null ? `GPIO ${data.gpio_pin}` : 'GPIO --';
+                const breaker = data && data.breaker_on ? 'Breaker: ON' : 'Breaker: OFF';
+                meta.textContent = `${gpio} • ${breaker}`;
+            }
+        }
+
+        async function refreshStatus() {
+            setBusy(true);
+            showError('');
+            try {
+                const res = await fetch('/api/water-pump/status');
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to load status');
+                }
+                renderStatus(data);
+            } catch (e) {
+                showError(e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function pumpOn() {
+            setBusy(true);
+            showError('');
+            try {
+                const res = await fetch('/api/water-pump/on', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to turn pump on');
+                }
+                await refreshStatus();
+            } catch (e) {
+                showError(e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function pumpOff() {
+            setBusy(true);
+            showError('');
+            try {
+                const res = await fetch('/api/water-pump/off', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to turn pump off');
+                }
+                await refreshStatus();
+            } catch (e) {
+                showError(e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        async function pumpRun() {
+            setBusy(true);
+            showError('');
+            try {
+                const res = await fetch('/api/water-pump/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_seconds: 2 })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to run pump');
+                }
+                await refreshStatus();
+            } catch (e) {
+                showError(e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            refreshTimer = setInterval(refreshStatus, 5000);
+        }
+
+        function stopAutoRefresh() {
+            if (refreshTimer) clearInterval(refreshTimer);
+            refreshTimer = null;
+        }
+
+        window.addEventListener('load', () => {
+            setDefaultPlantingDate();
+            refreshStatus();
+            loadSchedules();
+            loadGrowthPrediction();
+            startAutoRefresh();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) stopAutoRefresh();
+            else startAutoRefresh();
+        });
+
+        function ensureSidebarBackdrop() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return null;
+
+            let backdrop = document.getElementById('sidebarBackdrop');
+            if (!backdrop) {
+                backdrop = document.createElement('div');
+                backdrop.id = 'sidebarBackdrop';
+                backdrop.className = 'sidebar-backdrop';
+                sidebar.insertAdjacentElement('afterend', backdrop);
+            }
+
+            return backdrop;
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+
+            const backdrop = ensureSidebarBackdrop();
+            const isOpen = sidebar.classList.toggle('open');
+
+            if (backdrop) {
+                backdrop.classList.toggle('show', isOpen);
+                backdrop.onclick = () => {
+                    sidebar.classList.remove('open');
+                    backdrop.classList.remove('show');
+                };
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+AgriPinya 5-Class Dataset Summary
+
+Heart Rot: 1000
+Fruit Rot: 1000
+Yellow Spot: 1000
+Pink Disease: 1000
+Healthy: 1000
+
+Split distribution per class:
+- train: 800
+- valid: 100
+- test: 100

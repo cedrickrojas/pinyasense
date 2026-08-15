@@ -1,0 +1,36 @@
+{
+  "disease": "Fruit_Rot_Disease",
+  "confidence": 0.9915251135826111,
+  "method": "yolov8",
+  "timestamp": "2026-03-06T10:33:13.478332",
+  "image_path": "uploads/20260306_103312_OIP.jpg",
+  "analysis": {
+    "detected_classes": [
+      "Fruit_Rot_Disease"
+    ],
+    "class_counts": {
+      "Fruit_Rot_Disease": 1
+    },
+    "avg_confidence": 0.9915251135826111,
+    "num_bboxes": 1
+  },
+  "recommendations": {
+    "severity": "Unknown",
+    "action": "Consult expert",
+    "treatments": [
+      "Consult agricultural expert"
+    ],
+    "recommendations": [
+      "Get professional diagnosis"
+    ],
+    "fertilization": {
+      "priority": "Low",
+      "note": "Wait for proper diagnosis before fertilization.",
+      "schedule": [],
+      "micronutrients": [],
+      "avoid": [
+        "Any fertilization until diagnosis is confirmed"
+      ]
+    }
+  }
+}

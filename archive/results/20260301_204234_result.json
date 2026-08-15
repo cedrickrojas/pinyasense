@@ -1,0 +1,74 @@
+{
+  "disease": "Healthy",
+  "confidence": 0.5808061361312866,
+  "method": "model",
+  "timestamp": "2026-03-01T20:42:35.028245",
+  "image_path": "uploads/20260301_204234_test_video_frame.jpg",
+  "recommendations": {
+    "severity": "None",
+    "action": "Maintain",
+    "treatments": [
+      "Ipagpatuloy ang regular care",
+      "Balanced fertilization",
+      "Proper watering schedule",
+      "Regular monitoring"
+    ],
+    "recommendations": [
+      "Continue prevention measures",
+      "Regular inspection",
+      "Maintain good agricultural practices"
+    ],
+    "fertilization": {
+      "priority": "High",
+      "note": "Optimal growth phase - maintain regular fertilization.",
+      "schedule": [
+        {
+          "timing": "Vegetative stage (Month 1-6)",
+          "type": "High nitrogen NPK (20-10-10)",
+          "amount": "70g per plant",
+          "method": "Side dressing in circular band",
+          "frequency": "Every 2 months"
+        },
+        {
+          "timing": "Pre-flowering (Month 7-10)",
+          "type": "Balanced NPK (14-14-14)",
+          "amount": "60g per plant",
+          "method": "Broadcast and incorporate",
+          "frequency": "Every 6-8 weeks"
+        },
+        {
+          "timing": "Fruiting stage (Month 11-18)",
+          "type": "Potassium-rich (10-10-30)",
+          "amount": "80g per plant",
+          "method": "Split application around plant",
+          "frequency": "Every 2 months"
+        },
+        {
+          "timing": "Supplemental feeding",
+          "type": "Foliar spray (NPK 15-30-15)",
+          "amount": "3g per liter water",
+          "method": "Early morning foliar application",
+          "frequency": "Bi-weekly"
+        }
+      ],
+      "micronutrients": [
+        "Iron",
+        "Zinc",
+        "Manganese",
+        "Boron",
+        "Copper",
+        "Molybdenum"
+      ],
+      "organic_options": [
+        "Compost: 2-3kg per plant every 3 months",
+        "Vermicast: 1kg per plant monthly",
+        "Chicken manure: 500g per plant (well-composted)",
+        "Seaweed extract: Foliar spray bi-weekly"
+      ],
+      "avoid": [
+        "Over-fertilization",
+        "Application during very hot or dry conditions"
+      ]
+    }
+  }
+}

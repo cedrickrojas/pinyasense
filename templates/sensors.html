@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PinaSense">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
+    <title>Sensors - AgriPinya</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .sensors-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+        
+        .sensor-card {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 30px;
+            box-shadow: var(--box-shadow);
+            transition: var(--transition);
+            cursor: pointer;
+        }
+        
+        .sensor-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .sensor-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .sensor-icon {
+            font-size: 3rem;
+            width: 70px;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+        }
+        
+        .sensor-info h3 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }
+        
+        .sensor-info p {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .sensor-reading {
+            margin: 20px 0;
+        }
+        
+        .reading-value {
+            font-size: 3rem;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin: 10px 0;
+        }
+        
+        .reading-unit {
+            font-size: 1.5rem;
+            color: #666;
+        }
+        
+        .sensor-status {
+            display: inline-block;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 500;
+            margin: 10px 0;
+        }
+        
+        .status-optimal {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .sensor-recommendation {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.95rem;
+            border-left: 4px solid var(--info-color);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+        }
+        
+        .error {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .error i {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .error-content {
+            flex: 1;
+        }
+
+        .error-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .error-message {
+            font-size: 0.9rem;
+            opacity: 0.95;
+        }
+
+        .sensor-disconnected {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            border-left: 5px solid #d97706;
+        }
+
+        .sensor-disconnected i {
+            color: #d97706;
+        }
+        
+        .refresh-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: var(--transition);
+            margin-top: 20px;
+        }
+        
+        .refresh-btn:hover {
+            background: var(--secondary-color);
+            transform: scale(1.05);
+        }
+        
+        .last-updated {
+            text-align: center;
+            color: #666;
+            margin-top: 20px;
+            font-style: italic;
+        }
+        
+        .alert-badge {
+            background: var(--danger-color);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            margin-left: 10px;
+        }
+
+        @media (max-width: 1024px) {
+            .sensors-grid {
+                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                gap: 18px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .sensors-grid {
+                grid-template-columns: 1fr;
+                gap: 14px;
+                margin-top: 18px;
+            }
+
+            .sensor-card {
+                padding: 18px;
+            }
+
+            .sensor-header {
+                gap: 10px;
+                margin-bottom: 14px;
+            }
+
+            .sensor-icon {
+                width: 54px;
+                height: 54px;
+                font-size: 2rem;
+            }
+
+            .sensor-info h3 {
+                font-size: 1.15rem;
+            }
+
+            .reading-value {
+                font-size: 2.2rem;
+            }
+
+            .reading-unit {
+                font-size: 1.1rem;
+            }
+
+            .refresh-btn {
+                width: 100%;
+                padding: 12px 16px;
+                margin-top: 14px;
+            }
+
+            .error {
+                align-items: flex-start;
+                padding: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Toggle Button (Mobile) -->
+    <button class="sidebar-toggle" onclick="toggleSidebar()">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <a href="/dashboard" class="sidebar-logo">
+                <i class="fas fa-leaf"></i>
+                <span data-i18n="brand">AgriPinya</span>
+            </a>
+            <div class="language-selector">
+                <select id="languageSelect" onchange="changeLanguage()">
+                    <option value="en">English</option>
+                    <option value="tl">Tagalog</option>
+                    <option value="es">Español</option>
+                </select>
+            </div>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
+            <li><a href="/sensors" class="active"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
+            <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
+            <li><a href="/sensors/water-pump"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <div class="sidebar-section">Agriculture</div>
+            <li><a href="/forecast"><i class="fas fa-chart-line"></i> Forecast</a></li>
+            <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
+            <div class="sidebar-section">System</div>
+            <li><a href="/about"><i class="fas fa-info-circle"></i> About</a></li>
+        </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-wrapper">
+    <header class="hero">
+        <div class="container">
+            <h1 data-i18n="sensor_monitoring_title"><i class="fas fa-broadcast-tower"></i> Sensor Monitoring</h1>
+            <p data-i18n="sensor_monitoring_subtitle">Real-time monitoring of pineapple farm sensors</p>
+            <button class="refresh-btn" onclick="refreshAllSensors()">
+                <i class="fas fa-sync"></i> <span data-i18n="refresh_all">Refresh All</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="sensors-grid">
+            <!-- Soil Moisture Card -->
+            <div class="sensor-card" onclick="window.location.href='/sensors/soil-moisture'">
+                <div class="sensor-header">
+                    <div class="sensor-icon" style="background: linear-gradient(135deg, #8e44ad, #9b59b6);">
+                        <i class="fas fa-tint"></i>
+                    </div>
+                    <div class="sensor-info">
+                        <h3>Soil Moisture</h3>
+                        <p>Soil Moisture Level</p>
+                    </div>
+                </div>
+                <div id="soil-moisture-content" class="loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading...
+                </div>
+            </div>
+
+            <!-- Water Pump Card -->
+            <div class="sensor-card" onclick="window.location.href='/sensors/water-pump'">
+                <div class="sensor-header">
+                    <div class="sensor-icon" style="background: linear-gradient(135deg, #16a34a, #22c55e);">
+                        <i class="fas fa-faucet-drip"></i>
+                    </div>
+                    <div class="sensor-info">
+                        <h3 data-i18n="water_pump">Water Pump</h3>
+                        <p data-i18n="water_pump_desc">Manual irrigation control</p>
+                    </div>
+                </div>
+                <div id="water-pump-content" class="loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading...
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+        let autoRefreshInterval;
+
+        function refreshAllSensors() {
+            loadSoilMoisture();
+            loadWaterPumpStatus();
+        }
+
+        function loadWaterPumpStatus() {
+            const container = document.getElementById('water-pump-content');
+            if (!container) return;
+
+            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+            fetch('/api/water-pump/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        container.innerHTML = `
+                            <div class="error">
+                                <i class="fas fa-exclamation-circle"></i>
+                                <div class="error-content">
+                                    <div class="error-title">Pump Error</div>
+                                    <div class="error-message">${data.error}</div>
+                                </div>
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    const isOn = data.status === 'on';
+                    const statusClass = isOn ? 'status-optimal' : 'status-warning';
+                    const stateLabel = isOn ? 'ON' : 'OFF';
+                    const gpioInfo = data.gpio_pin != null ? `GPIO ${data.gpio_pin}` : 'GPIO --';
+                    const autoLabel = data.auto_pump_enabled ? 'Auto: ON' : 'Auto: OFF';
+
+                    container.innerHTML = `
+                        <div class="sensor-reading">
+                            <div class="reading-value">${stateLabel}</div>
+                            <div style="margin-top: 8px; font-size: 0.9rem; color: #777;">${gpioInfo} • ${autoLabel}</div>
+                            <div class="sensor-status ${statusClass}">
+                                ${stateLabel}
+                            </div>
+                            <div class="sensor-recommendation">
+                                <i class="fas fa-hand-pointer"></i> Tap to control pump
+                            </div>
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    container.innerHTML = `
+                        <div class="error">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <div class="error-content">
+                                <div class="error-title">Failed to Load</div>
+                                <div class="error-message">${error.message}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+        }
+
+        function loadSoilMoisture() {
+            const container = document.getElementById('soil-moisture-content');
+            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+
+            fetch('/api/sensors/soil-moisture')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        const isDisconnected = data.status === 'disconnected';
+                        const errorClass = isDisconnected ? 'sensor-disconnected' : '';
+                        const icon = isDisconnected ? 'fa-plug' : 'fa-exclamation-circle';
+                        const title = isDisconnected ? 'Sensor Not Connected' : 'Sensor Error';
+                        
+                        container.innerHTML = `
+                            <div class="error ${errorClass}">
+                                <i class="fas ${icon}"></i>
+                                <div class="error-content">
+                                    <div class="error-title">${title}</div>
+                                    <div class="error-message">${data.error}</div>
+                                </div>
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    const statusClass = data.status === 'optimal' ? 'status-optimal' : 
+                                       data.status === 'dry' ? 'status-danger' : 'status-warning';
+                    const alertBadge = data.alert ? '<span class="alert-badge"><i class="fas fa-exclamation-triangle"></i> Alert</span>' : '';
+                    const readingLabel = data.sensor_mode === 'digital_do'
+                        ? `${data.state}`
+                        : `${data.value}<span class="reading-unit">${data.unit}</span>`;
+                    const rawInfo = data.sensor_mode === 'digital_do'
+                        ? `<div style="margin-top: 8px; font-size: 0.9rem; color: #777;">Raw DO: ${data.raw_value} (GPIO ${data.gpio_pin})</div>`
+                        : '';
+
+                    container.innerHTML = `
+                        <div class="sensor-reading">
+                            <div class="reading-value">
+                                ${readingLabel}
+                            </div>
+                            ${rawInfo}
+                            <div class="sensor-status ${statusClass}">
+                                ${data.status.toUpperCase()} ${alertBadge}
+                            </div>
+                            <div class="sensor-recommendation">
+                                <i class="fas fa-lightbulb"></i> ${data.recommendation}
+                            </div>
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    container.innerHTML = `
+                        <div class="error">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <div class="error-content">
+                                <div class="error-title">Failed to Load</div>
+                                <div class="error-message">${error.message}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+        }
+
+        // Auto-refresh every 5 seconds
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            autoRefreshInterval = setInterval(refreshAllSensors, 5000);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+        }
+
+        // Load data on page load
+        window.addEventListener('load', () => {
+            refreshAllSensors();
+            startAutoRefresh();
+        });
+
+        // Stop auto-refresh when page is not visible
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+            }
+        });
+
+        function ensureSidebarBackdrop() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return null;
+
+            let backdrop = document.getElementById('sidebarBackdrop');
+            if (!backdrop) {
+                backdrop = document.createElement('div');
+                backdrop.id = 'sidebarBackdrop';
+                backdrop.className = 'sidebar-backdrop';
+                sidebar.insertAdjacentElement('afterend', backdrop);
+                backdrop.addEventListener('click', () => setSidebarOpen(false));
+            }
+
+            return backdrop;
+        }
+
+        function setSidebarOpen(isOpen) {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+
+            sidebar.classList.toggle('mobile-open', isOpen);
+            document.body.classList.toggle('mobile-nav-open', isOpen);
+            ensureSidebarBackdrop();
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+
+            const shouldOpen = !sidebar.classList.contains('mobile-open');
+            setSidebarOpen(shouldOpen);
+        }
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                setSidebarOpen(false);
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('#sidebar a')) return;
+            if (window.innerWidth <= 768) {
+                setSidebarOpen(false);
+            }
+        });
+    </script>
+    </div> <!-- End main-wrapper -->
+</body>
+</html>

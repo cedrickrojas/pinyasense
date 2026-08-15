@@ -1,0 +1,58 @@
+
+╔═══════════════════════════════════════════════════════════╗
+║     🍍 AgriPinya YOLOv8 - Action Plan & Checklist 🍍    ║
+║                                                            ║
+║       Complete this guide to train your first model        ║
+║                                                            ║
+║       Date: 2026-03-04 04:59 │
+╚═══════════════════════════════════════════════════════════╝
+
+PHASE 1: PREPARE (5 minutes)
+☐ Have dataset ready: /path/to/Pineapple-Disease.v1i.yolov8
+☐ Verify Python: python --version (need 3.8+)
+☐ Install dependencies: pip install -r requirements.txt
+
+PHASE 2: VERIFY (5 minutes)
+☐ Run diagnostics: python scripts/setup_diagnostics.py
+☐ Check all green ✅ marks
+☐ Fix any red ❌ issues
+
+PHASE 3: SETUP DATASET (5 minutes)
+☐ Prepare: python yolov8_quickstart.py --setup /path/to/dataset
+☐ Verify: ls -la dataset_yolov8/
+☐ Check: data.yaml, train/, val/, test/ exist
+
+PHASE 4: TRAIN MODEL (1-2 hours)
+☐ Train: python yolov8_quickstart.py --train data.yaml
+☐ Monitor: Watch losses decrease
+☐ Wait: 30-120 min depending on GPU
+
+PHASE 5: TEST MODEL (5 minutes)
+☐ Test single: python scripts/test_yolov8_inference.py detect models/pineapple_yolov8s_latest.pt image.jpg
+☐ Visualize: python scripts/test_yolov8_inference.py visualize models/pineapple_yolov8s_latest.pt image.jpg
+☐ Check: Output shows detected diseases
+
+PHASE 6: DEPLOY (1 minute)
+☐ Verify model: ls models/pineapple_yolov8s_latest.pt
+☐ Start app: python app.py
+☐ Open: http://localhost:5000
+☐ Test: Upload image and verify detection
+
+SUCCESS CHECKLIST
+✓ Model trained and saved
+✓ Detection works on test images
+✓ AgriPinya runs
+✓ Web interface works
+✓ Model detects diseases
+
+TROUBLESHOOTING QUICK FIXES
+Out of memory → python yolov8_quickstart.py --train data.yaml --batch-size 8
+Slow → Use --model-size n instead of s
+Poor accuracy → Increase --epochs to 200
+Questions → Read YOLOV8_GETTING_STARTED.md
+
+TIME ESTIMATE: ~1.5 hours total (including training)
+
+═══════════════════════════════════════════════════════════
+START: python scripts/setup_diagnostics.py
+═══════════════════════════════════════════════════════════

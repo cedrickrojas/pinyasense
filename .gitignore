@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Flask
+instance/
+.webassets-cache
+
+# Uploads and Results
+uploads/*
+!uploads/.gitkeep
+results/*
+!results/.gitkeep
+
+# Models
+models/*.pt
+models/*.pth
+models/*.h5
+!models/README.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+app.log
+
+# Temporary workspace artifacts
+.lgd-nfy0
+.tmp2
+
+# Duplicate legacy app copy
+PinyaSense/
+
+# Environment variables
+.env
+.env.local
+
+# Firebase & Credentials
+serviceAccountKey.json
+firebase_config.json
+*.pem
+*.key
+credentials.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+temp/
+data/
+
+# Large files
+*.keras
+models/*.keras
+
+# Training/runtime outputs
+runs/
+sensor_data/

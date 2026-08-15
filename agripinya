@@ -1,0 +1,392 @@
+import time
+import random
+import board
+import adafruit_dht
+import RPi.GPIO as GPIO
+
+import firebase_admin
+from firebase_admin import credentials, db
+
+
+# =========================================================
+# PINYASENSE CONFIGURATION
+# =========================================================
+
+# DHT22
+DHT_PIN = board.D4
+
+# Digital sensors / actuators
+WATER_LEVEL_PIN = 17
+BUZZER_PIN = 18
+RELAY_PIN = 23
+STATUS_LED_PIN = 24
+
+
+# =========================================================
+# GPIO SETUP
+# =========================================================
+
+GPIO.setmode(GPIO.BCM)
+
+GPIO.setup(WATER_LEVEL_PIN, GPIO.IN)
+GPIO.setup(BUZZER_PIN, GPIO.OUT)
+GPIO.setup(RELAY_PIN, GPIO.OUT)
+GPIO.setup(STATUS_LED_PIN, GPIO.OUT)
+
+GPIO.output(BUZZER_PIN, GPIO.LOW)
+GPIO.output(RELAY_PIN, GPIO.LOW)
+GPIO.output(STATUS_LED_PIN, GPIO.LOW)
+
+
+# =========================================================
+# DHT22 SETUP
+# =========================================================
+
+dht_device = adafruit_dht.DHT22(DHT_PIN)
+
+
+# =========================================================
+# FIREBASE SETUP
+# =========================================================
+
+# Ilagay dito ang downloaded Firebase service account file
+FIREBASE_CREDENTIALS = "firebase-service-account.json"
+
+cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+
+firebase_admin.initialize_app(
+    cred,
+    {
+        "databaseURL": "https://YOUR-PROJECT-ID-default-rtdb.firebaseio.com/"
+    }
+)
+
+
+# =========================================================
+# FIREBASE REFERENCE
+# =========================================================
+
+sensor_ref = db.reference("pinyasense/sensor_data")
+status_ref = db.reference("pinyasense/system_status")
+
+
+# =========================================================
+# SENSOR FUNCTIONS
+# =========================================================
+
+def read_temperature_humidity():
+
+    try:
+        temperature = dht_device.temperature
+        humidity = dht_device.humidity
+
+        if temperature is None or humidity is None:
+            return None, None
+
+        return temperature, humidity
+
+    except Exception as e:
+        print("DHT22 Error:", e)
+        return None, None
+
+
+def read_water_level():
+
+    try:
+        water_status = GPIO.input(WATER_LEVEL_PIN)
+
+        if water_status == GPIO.HIGH:
+            return "HIGH"
+        else:
+            return "LOW"
+
+    except Exception as e:
+        print("Water Level Error:", e)
+        return "UNKNOWN"
+
+
+# =========================================================
+# SOIL MOISTURE
+# =========================================================
+# Placeholder muna ito.
+#
+# Raspberry Pi walang built-in analog input.
+# Kailangan ng ADC tulad ng MCP3008 o ADS1115.
+#
+# Kapag may ADC na kayo, papalitan natin ito ng actual
+# sensor reading.
+
+
+def read_soil_moisture():
+
+    # TEMPORARY VALUE
+    # Palitan kapag nakakabit na ang ADC.
+
+    moisture = random.randint(30, 80)
+
+    return moisture
+
+
+# =========================================================
+# LIGHT SENSOR
+# =========================================================
+
+def read_light():
+
+    # TEMPORARY VALUE
+    # Palitan kapag nakakabit na ang LDR/ADC.
+
+    light = random.randint(20, 90)
+
+    return light
+
+
+# =========================================================
+# PINEAPPLE CONDITION
+# =========================================================
+
+def determine_condition(
+    temperature,
+    humidity,
+    soil_moisture
+):
+
+    if temperature is None or humidity is None:
+        return "UNKNOWN"
+
+    if temperature < 20:
+        return "LOW TEMPERATURE"
+
+    if temperature > 35:
+        return "HIGH TEMPERATURE"
+
+    if humidity < 40:
+        return "LOW HUMIDITY"
+
+    if humidity > 90:
+        return "HIGH HUMIDITY"
+
+    if soil_moisture < 30:
+        return "DRY SOIL"
+
+    if soil_moisture > 80:
+        return "WET SOIL"
+
+    return "NORMAL"
+
+
+# =========================================================
+# WATER / PUMP CONTROL
+# =========================================================
+
+def control_pump(soil_moisture):
+
+    if soil_moisture < 30:
+
+        print("Soil is dry.")
+        print("Turning ON water pump...")
+
+        GPIO.output(RELAY_PIN, GPIO.HIGH)
+
+        return "ON"
+
+    else:
+
+        print("Soil moisture is sufficient.")
+        print("Turning OFF water pump...")
+
+        GPIO.output(RELAY_PIN, GPIO.LOW)
+
+        return "OFF"
+
+
+# =========================================================
+# BUZZER
+# =========================================================
+
+def control_buzzer(condition):
+
+    if condition in [
+        "HIGH TEMPERATURE",
+        "LOW TEMPERATURE",
+        "LOW HUMIDITY",
+        "HIGH HUMIDITY",
+        "DRY SOIL"
+    ]:
+
+        GPIO.output(BUZZER_PIN, GPIO.HIGH)
+
+    else:
+
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+
+
+# =========================================================
+# FIREBASE UPLOAD
+# =========================================================
+
+def upload_to_firebase(
+    temperature,
+    humidity,
+    soil_moisture,
+    light,
+    water_level,
+    condition,
+    pump_status
+):
+
+    timestamp = int(time.time())
+
+    data = {
+
+        "temperature": temperature,
+
+        "humidity": humidity,
+
+        "soil_moisture": soil_moisture,
+
+        "light": light,
+
+        "water_level": water_level,
+
+        "condition": condition,
+
+        "pump": pump_status,
+
+        "timestamp": timestamp
+
+    }
+
+    try:
+
+        sensor_ref.push(data)
+
+        status_ref.set({
+
+            "online": True,
+
+            "last_update": timestamp,
+
+            "condition": condition,
+
+            "pump": pump_status
+
+        })
+
+        print("Data uploaded to Firebase.")
+
+    except Exception as e:
+
+        print("Firebase Error:", e)
+
+
+# =========================================================
+# MAIN PROGRAM
+# =========================================================
+
+def main():
+
+    print("===================================")
+    print("        PINYASENSE SYSTEM")
+    print("===================================")
+    print("Raspberry Pi monitoring started.")
+    print()
+
+    GPIO.output(STATUS_LED_PIN, GPIO.HIGH)
+
+    while True:
+
+        try:
+
+            print("-----------------------------------")
+            print("Reading sensors...")
+
+            # Temperature / Humidity
+            temperature, humidity = read_temperature_humidity()
+
+            # Soil
+            soil_moisture = read_soil_moisture()
+
+            # Light
+            light = read_light()
+
+            # Water
+            water_level = read_water_level()
+
+            # Determine pineapple/environment condition
+            condition = determine_condition(
+                temperature,
+                humidity,
+                soil_moisture
+            )
+
+            # Pump
+            pump_status = control_pump(
+                soil_moisture
+            )
+
+            # Buzzer
+            control_buzzer(condition)
+
+            # Display readings
+            print()
+            print("Temperature :", temperature, "°C")
+            print("Humidity    :", humidity, "%")
+            print("Soil Moist. :", soil_moisture, "%")
+            print("Light       :", light, "%")
+            print("Water Level :", water_level)
+            print("Condition   :", condition)
+            print("Pump        :", pump_status)
+
+            # Firebase
+            upload_to_firebase(
+                temperature,
+                humidity,
+                soil_moisture,
+                light,
+                water_level,
+                condition,
+                pump_status
+            )
+
+            print()
+            print("Waiting 10 seconds...")
+
+            time.sleep(10)
+
+        except KeyboardInterrupt:
+
+            print()
+            print("Stopping PinyaSense...")
+
+            break
+
+        except Exception as e:
+
+            print("System Error:", e)
+
+            time.sleep(5)
+
+
+# =========================================================
+# CLEANUP
+# =========================================================
+
+try:
+
+    main()
+
+finally:
+
+    GPIO.output(BUZZER_PIN, GPIO.LOW)
+    GPIO.output(RELAY_PIN, GPIO.LOW)
+    GPIO.output(STATUS_LED_PIN, GPIO.LOW)
+
+    GPIO.cleanup()
+
+    try:
+        dht_device.exit()
+    except:
+        pass
+
+    print("PinyaSense safely stopped.")

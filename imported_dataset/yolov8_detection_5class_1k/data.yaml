@@ -1,0 +1,10 @@
+train: /home/voicebrain/agripinya/imported_dataset/yolov8_detection_5class_1k/train/images
+val: /home/voicebrain/agripinya/imported_dataset/yolov8_detection_5class_1k/valid/images
+test: /home/voicebrain/agripinya/imported_dataset/yolov8_detection_5class_1k/test/images
+nc: 5
+names:
+- Heart Rot
+- Fruit Rot
+- Yellow Spot
+- Pink Disease
+- Healthy

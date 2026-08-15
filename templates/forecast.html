@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PinaSense">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
+    <title>Growth Forecast - AgriPinya</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .forecast-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 16px 40px;
+        }
+
+        .forecast-controls {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 22px;
+            margin-bottom: 22px;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 14px;
+        }
+
+        .controls-grid label {
+            display: block;
+            font-size: 0.9rem;
+            color: #334155;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .controls-grid input,
+        .controls-grid select {
+            width: 100%;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 0.95rem;
+            color: #0f172a;
+            background: #f8fafc;
+        }
+
+        .actions-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+        }
+
+        .btn-outline {
+            border: 1px solid #1f7a63;
+            color: #1f7a63;
+            background: white;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-bottom: 22px;
+        }
+
+        .summary-card {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 20px;
+        }
+
+        .summary-label {
+            color: #64748b;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
+        }
+
+        .summary-value {
+            color: #0f172a;
+            font-size: 1.4rem;
+            font-weight: 700;
+        }
+
+        .stage-highlight {
+            background: linear-gradient(135deg, #1f7a63, #2f9c7f);
+            color: white;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .chart-card {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 20px;
+        }
+
+        .chart-card h3 {
+            margin-bottom: 12px;
+            color: #1f2937;
+            font-size: 1.05rem;
+        }
+
+        .notes-box {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 20px;
+        }
+
+        .notes-box ul {
+            margin: 8px 0 0;
+            padding-left: 18px;
+            color: #475569;
+        }
+
+        .error-box {
+            margin-top: 14px;
+            background: #fee2e2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            padding: 12px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .forecast-container {
+                padding: 14px 10px 28px;
+            }
+
+            .forecast-controls,
+            .summary-card,
+            .chart-card,
+            .notes-box {
+                padding: 14px;
+            }
+
+            .controls-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .actions-row {
+                flex-direction: column;
+            }
+
+            .actions-row .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .summary-value {
+                font-size: 1.15rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button class="sidebar-toggle" onclick="toggleSidebar()">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <a href="/dashboard" class="sidebar-logo">
+                <i class="fas fa-leaf"></i>
+                <span data-i18n="brand">AgriPinya</span>
+            </a>
+            <div class="language-selector">
+                <select id="languageSelect" onchange="changeLanguage()">
+                    <option value="en">English</option>
+                    <option value="tl">Tagalog</option>
+                    <option value="es">Español</option>
+                </select>
+            </div>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
+            <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
+            <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
+            <div class="sidebar-section">Agriculture</div>
+            <li><a href="/forecast" class="active"><i class="fas fa-chart-line"></i> Forecast</a></li>
+            <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
+            <div class="sidebar-section">System</div>
+            <li><a href="/about"><i class="fas fa-info-circle"></i> About</a></li>
+        </ul>
+    </aside>
+
+    <div class="main-wrapper">
+        <header class="hero" style="padding: 2rem 0;">
+            <div class="container">
+                <h1 data-i18n="forecast_title"><i class="fas fa-chart-line"></i> Growth Stage & Harvest Forecast</h1>
+                <p data-i18n="forecast_subtitle">Time-series forecast for pineapple development and optimal harvest planning.</p>
+            </div>
+        </header>
+
+        <div class="forecast-container">
+            <div class="forecast-controls">
+                <div class="controls-grid">
+                    <div>
+                        <label for="plantingDate">Planting Date</label>
+                        <input type="date" id="plantingDate">
+                    </div>
+                    <div>
+                        <label for="profile">Farm Profile</label>
+                        <select id="profile">
+                            <option value="standard">Standard (16-18 months)</option>
+                            <option value="smooth_cayenne">Smooth Cayenne (17-19 months)</option>
+                            <option value="md2">MD2 (15-17 months)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="horizonDays">Forecast Horizon (days)</label>
+                        <input type="number" id="horizonDays" value="30" min="7" max="90">
+                    </div>
+                    <div>
+                        <label for="historyDays">History Window (days)</label>
+                        <input type="number" id="historyDays" value="90" min="14" max="365">
+                    </div>
+                    <div>
+                        <label for="cycleDays">Cycle Days (optional override)</label>
+                        <input type="number" id="cycleDays" placeholder="e.g. 540">
+                    </div>
+                </div>
+                <div class="actions-row">
+                    <button class="btn btn-primary" onclick="loadForecast()">
+                        <i class="fas fa-bolt"></i> Run Forecast
+                    </button>
+                    <button class="btn btn-outline" onclick="applyProfileDefaults()">
+                        <i class="fas fa-sliders-h"></i> Apply Profile Defaults
+                    </button>
+                </div>
+                <div id="errorBox" class="error-box"></div>
+            </div>
+
+            <div class="summary-grid">
+                <div class="summary-card stage-highlight">
+                    <div class="summary-label" style="color: rgba(255, 255, 255, 0.86);">Predicted Growth Stage</div>
+                    <div class="summary-value" id="stageValue" style="color: white;">--</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Optimal Harvest Date</div>
+                    <div class="summary-value" id="harvestDateValue">--</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Days Until Harvest</div>
+                    <div class="summary-value" id="daysToHarvestValue">--</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Forecast Confidence</div>
+                    <div class="summary-value" id="confidenceValue">--</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Effective Growth Days</div>
+                    <div class="summary-value" id="effectiveDaysValue">--</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">History Days Used</div>
+                    <div class="summary-value" id="historyUsedValue">--</div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3><i class="fas fa-leaf"></i> Forecasted Environment Trends</h3>
+                    <canvas id="envChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3><i class="fas fa-seedling"></i> Daily Growth Score Forecast</h3>
+                    <canvas id="scoreChart"></canvas>
+                </div>
+            </div>
+
+            <div class="notes-box">
+                <h3><i class="fas fa-notes-medical"></i> Model Notes</h3>
+                <ul id="notesList">
+                    <li>Run forecast to view model notes.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+        let envChart;
+        let scoreChart;
+
+        const profileDefaults = {
+            standard: { cycleDays: 540 },
+            smooth_cayenne: { cycleDays: 560 },
+            md2: { cycleDays: 500 }
+        };
+
+        function ensureSidebarBackdrop() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return null;
+
+            let backdrop = document.getElementById('sidebarBackdrop');
+            if (!backdrop) {
+                backdrop = document.createElement('div');
+                backdrop.id = 'sidebarBackdrop';
+                backdrop.className = 'sidebar-backdrop';
+                sidebar.insertAdjacentElement('afterend', backdrop);
+                backdrop.addEventListener('click', () => setSidebarOpen(false));
+            }
+
+            return backdrop;
+        }
+
+        function setSidebarOpen(isOpen) {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+
+            sidebar.classList.toggle('mobile-open', isOpen);
+            document.body.classList.toggle('mobile-nav-open', isOpen);
+            ensureSidebarBackdrop();
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+
+            const shouldOpen = !sidebar.classList.contains('mobile-open');
+            setSidebarOpen(shouldOpen);
+        }
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                setSidebarOpen(false);
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('#sidebar a')) return;
+            if (window.innerWidth <= 768) {
+                setSidebarOpen(false);
+            }
+        });
+
+        function setDefaultPlantingDate() {
+            const dateInput = document.getElementById('plantingDate');
+            if (dateInput.value) return;
+
+            const d = new Date();
+            d.setDate(d.getDate() - 150);
+            dateInput.value = d.toISOString().slice(0, 10);
+        }
+
+        function applyProfileDefaults() {
+            const profile = document.getElementById('profile').value;
+            document.getElementById('cycleDays').value = profileDefaults[profile].cycleDays;
+        }
+
+        function renderSummary(summary, historyDaysUsed) {
+            document.getElementById('stageValue').textContent = summary.predicted_growth_stage;
+            document.getElementById('harvestDateValue').textContent = summary.optimal_harvest_date;
+            document.getElementById('daysToHarvestValue').textContent = `${summary.days_until_optimal_harvest} days`;
+            document.getElementById('confidenceValue').textContent = `${(summary.forecast_confidence * 100).toFixed(1)}%`;
+            document.getElementById('effectiveDaysValue').textContent = summary.effective_growth_days;
+            document.getElementById('historyUsedValue').textContent = historyDaysUsed;
+        }
+
+        function renderNotes(notes) {
+            const notesList = document.getElementById('notesList');
+            notesList.innerHTML = (notes || []).map(n => `<li>${n}</li>`).join('') || '<li>No notes available.</li>';
+        }
+
+        function renderCharts(items) {
+            const labels = items.map(i => i.date);
+            const soil = items.map(i => i.soil_moisture_percent);
+            const temp = items.map(i => i.temperature_c);
+            const humid = items.map(i => i.humidity_percent);
+            const score = items.map(i => i.growth_score);
+
+            if (envChart) envChart.destroy();
+            if (scoreChart) scoreChart.destroy();
+
+            const envCtx = document.getElementById('envChart').getContext('2d');
+            const scoreCtx = document.getElementById('scoreChart').getContext('2d');
+
+            envChart = new Chart(envCtx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Soil Moisture %',
+                            data: soil,
+                            borderColor: '#0ea5e9',
+                            backgroundColor: 'rgba(14, 165, 233, 0.1)',
+                            tension: 0.25
+                        },
+                        {
+                            label: 'Temperature C',
+                            data: temp,
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.25
+                        },
+                        {
+                            label: 'Humidity %',
+                            data: humid,
+                            borderColor: '#16a34a',
+                            backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                            tension: 0.25
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2.2
+                }
+            });
+
+            scoreChart = new Chart(scoreCtx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Growth Score',
+                            data: score,
+                            backgroundColor: 'rgba(31, 122, 99, 0.7)',
+                            borderColor: '#1f7a63',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2.2,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadForecast() {
+            const errorBox = document.getElementById('errorBox');
+            errorBox.style.display = 'none';
+
+            const plantingDate = document.getElementById('plantingDate').value;
+            const horizonDays = document.getElementById('horizonDays').value;
+            const historyDays = document.getElementById('historyDays').value;
+            const profile = document.getElementById('profile').value;
+            const cycleDays = document.getElementById('cycleDays').value;
+
+            const params = new URLSearchParams({
+                planting_date: plantingDate,
+                horizon_days: horizonDays,
+                history_days: historyDays,
+                profile: profile
+            });
+
+            if (cycleDays) params.set('cycle_days', cycleDays);
+
+            try {
+                const response = await fetch(`/api/forecast/growth-harvest?${params.toString()}`);
+                const data = await response.json();
+
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || 'Unable to load forecast');
+                }
+
+                renderSummary(data.summary, data.history_days_used);
+                renderNotes(data.notes);
+                renderCharts(data.future_environment_forecast || []);
+            } catch (err) {
+                errorBox.style.display = 'block';
+                errorBox.textContent = err.message;
+            }
+        }
+
+        window.addEventListener('load', () => {
+            setDefaultPlantingDate();
+            applyProfileDefaults();
+            loadForecast();
+        });
+    </script>
+</body>
+</html>

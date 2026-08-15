@@ -1,0 +1,47 @@
+{
+  "model_type": "image_classification",
+  "architecture": "MobileNetV2 + Custom Layers",
+  "input_shape": [
+    224,
+    224,
+    3
+  ],
+  "classes": [
+    "CrownRot",
+    "FruitRot",
+    "MealybugWilt",
+    "RootRot",
+    "Healthy"
+  ],
+  "num_classes": 5,
+  "class_indices": {
+    "CrownRot": 0,
+    "FruitRot": 1,
+    "MealybugWilt": 2,
+    "RootRot": 3,
+    "Healthy": 4
+  },
+  "training_date": "2026-03-28T14:53:43.725742",
+  "training_samples": 4000,
+  "validation_samples": 1000,
+  "epochs": 16,
+  "batch_size": 32,
+  "img_size": [
+    224,
+    224
+  ],
+  "class_weights_used": true,
+  "class_weights": {
+    "0": 1.0,
+    "1": 1.0,
+    "2": 1.0,
+    "3": 1.0,
+    "4": 1.0
+  },
+  "final_metrics": {
+    "train_accuracy": 0.8262500166893005,
+    "val_accuracy": 0.8939999938011169,
+    "train_loss": 0.4586485028266907,
+    "val_loss": 0.2957325279712677
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "disease": "Diseased",
+  "confidence": 0.5373764634132385,
+  "method": "model",
+  "timestamp": "2026-03-01T18:05:45.162373",
+  "image_path": "uploads/20260301_180543_OIP_1.jpg",
+  "recommendations": {
+    "severity": "High",
+    "action": "Immediate",
+    "treatments": [
+      "Identify specific disease symptoms",
+      "Isolate affected plants if possible",
+      "Apply broad-spectrum fungicide",
+      "Remove severely affected parts",
+      "Improve overall plant health"
+    ],
+    "recommendations": [
+      "Get professional diagnosis for specific disease",
+      "Monitor closely for disease progression",
+      "Improve growing conditions"
+    ],
+    "fertilization": {
+      "priority": "Medium",
+      "note": "Boost plant immunity while treating disease.",
+      "schedule": [
+        {
+          "timing": "During treatment",
+          "type": "Balanced NPK (15-15-15)",
+          "amount": "50g per plant",
+          "method": "Side dressing",
+          "frequency": "Every 6 weeks"
+        },
+        {
+          "timing": "Recovery support",
+          "type": "Potassium sulfate",
+          "amount": "30g per plant",
+          "method": "Soil drench",
+          "frequency": "Monthly"
+        }
+      ],
+      "micronutrients": [
+        "Complete micronutrient mix"
+      ],
+      "avoid": [
+        "Excessive nitrogen during disease treatment"
+      ]
+    }
+  }
+}
