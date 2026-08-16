@@ -135,9 +135,13 @@ def get_detection_results_firestore(user_id=None, limit=50):
     if not firestore_ready():
         return []
 
-    query = firestore_db.collection('disease_results').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+    query = firestore_db.collection('disease_results')
     if user_id:
+        # Filtering by user_id and ordering by timestamp together requires a
+        # composite index. Avoid that by sorting client-side instead.
         query = query.where('user_id', '==', user_id)
+    else:
+        query = query.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
 
     docs = query.stream()
     results = []
@@ -145,6 +149,11 @@ def get_detection_results_firestore(user_id=None, limit=50):
         item = doc.to_dict() or {}
         item['id'] = doc.id
         results.append(item)
+
+    if user_id:
+        results.sort(key=lambda r: r.get('timestamp', ''), reverse=True)
+        results = results[:limit]
+
     return results
 
 
@@ -263,7 +272,9 @@ def get_sensor_data_firestore(sensor_type, user_id=None, limit=100):
     if not firestore_ready():
         return []
 
-    query = firestore_db.collection('sensor_data').where('sensor_type', '==', sensor_type).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+    # Filtering by sensor_type/user_id and ordering by timestamp together
+    # requires a composite index. Avoid that by sorting client-side instead.
+    query = firestore_db.collection('sensor_data').where('sensor_type', '==', sensor_type)
     if user_id:
         query = query.where('user_id', '==', user_id)
 
@@ -272,7 +283,9 @@ def get_sensor_data_firestore(sensor_type, user_id=None, limit=100):
         item = doc.to_dict() or {}
         item['id'] = doc.id
         readings.append(item)
-    return readings
+
+    readings.sort(key=lambda r: r.get('timestamp', ''), reverse=True)
+    return readings[:limit]
 
 
 def save_report_firestore(report, user_id=None):
