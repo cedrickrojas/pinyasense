@@ -41,6 +41,7 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 CORS(app)
 
 # Configuration
@@ -1180,6 +1181,17 @@ def _run_water_pump_schedule(schedule_id: str) -> bool:
     if not schedule or not schedule.get('enabled', True):
         return False
 
+    # Automatic (moisture-based) watering takes over irrigation decisions when it's
+    # on, so fixed-time schedules skip themselves to avoid double-watering the field.
+    if _auto_pump_enabled():
+        schedule['last_run_at'] = datetime.now().isoformat()
+        schedule['last_run_status'] = 'skipped_auto_mode'
+        schedule['updated_at'] = datetime.now().isoformat()
+        updated_schedules = [schedule if item.get('id') == schedule_id else item for item in schedules]
+        _save_water_pump_schedules(updated_schedules)
+        print(f"Water pump schedule {schedule_id} skipped: automatic watering is ON")
+        return False
+
     duration_seconds = int(schedule.get('duration_seconds', sensor_monitor.WATER_PUMP_DEFAULT_DURATION))
     result = sensor_monitor.run_water_pump_for_seconds(duration_seconds)
     schedule['last_run_at'] = datetime.now().isoformat()
@@ -1197,8 +1209,41 @@ def _run_water_pump_schedule(schedule_id: str) -> bool:
     return not bool(result.get('error'))
 
 
+AUTO_PUMP_SETTINGS_FILE = os.path.join('data', 'auto_pump_settings.json')
+
+
+def _auto_pump_settings_path() -> str:
+    os.makedirs(os.path.dirname(AUTO_PUMP_SETTINGS_FILE), exist_ok=True)
+    return AUTO_PUMP_SETTINGS_FILE
+
+
+def _load_auto_pump_settings() -> Dict:
+    path = _auto_pump_settings_path()
+    if os.path.exists(path):
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+    # First run / unreadable file: seed from the env var default so existing
+    # deployments that set AUTO_PUMP_ENABLED keep working, then persist it.
+    default_enabled = os.getenv('AUTO_PUMP_ENABLED', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+    settings = {'enabled': default_enabled}
+    _save_auto_pump_settings(settings)
+    return settings
+
+
+def _save_auto_pump_settings(settings: Dict) -> None:
+    path = _auto_pump_settings_path()
+    with open(path, 'w') as f:
+        json.dump(settings, f, indent=2)
+
+
 def _auto_pump_enabled() -> bool:
-    return os.getenv('AUTO_PUMP_ENABLED', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(_load_auto_pump_settings().get('enabled', False))
 
 
 _AUTO_PUMP_STATE = {
@@ -1284,19 +1329,21 @@ if SCHEDULER_AVAILABLE:
         # Schedule every 7 days
         scheduler.add_job(send_scheduled_reports, 'interval', days=7, id='weekly_reports', replace_existing=True)
 
-        # Optional: auto irrigation trigger (disabled by default)
-        if _auto_pump_enabled():
-            pump_interval_seconds = int(os.getenv('AUTO_PUMP_INTERVAL_SECONDS', '60'))
-            scheduler.add_job(
-                auto_irrigation_tick,
-                'interval',
-                seconds=pump_interval_seconds,
-                id='auto_irrigation',
-                replace_existing=True,
-                max_instances=1,
-                coalesce=True,
-            )
-            print(f"Scheduler: auto irrigation enabled every {pump_interval_seconds}s")
+        # Auto irrigation: always scheduled, but auto_irrigation_tick() itself checks
+        # _auto_pump_enabled() (persisted in data/auto_pump_settings.json) and no-ops
+        # when disabled. This lets the Water Pump page toggle it on/off at runtime
+        # without needing a server restart.
+        pump_interval_seconds = int(os.getenv('AUTO_PUMP_INTERVAL_SECONDS', '60'))
+        scheduler.add_job(
+            auto_irrigation_tick,
+            'interval',
+            seconds=pump_interval_seconds,
+            id='auto_irrigation',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        print(f"Scheduler: auto irrigation check every {pump_interval_seconds}s (currently {'ON' if _auto_pump_enabled() else 'OFF'})")
 
         _sync_water_pump_schedules_to_scheduler()
         scheduler.start()
@@ -2199,6 +2246,48 @@ def water_pump_status():
             'auto_pump_enabled': _auto_pump_enabled(),
             'timestamp': datetime.now().isoformat(),
         }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/water-pump/auto', methods=['GET', 'POST'])
+def water_pump_auto():
+    """Get or toggle automatic (moisture-based) watering."""
+    try:
+        if request.method == 'GET':
+            settings = _load_auto_pump_settings()
+            return jsonify({
+                'enabled': bool(settings.get('enabled', False)),
+                'interval_seconds': int(os.getenv('AUTO_PUMP_INTERVAL_SECONDS', '60')),
+                'cooldown_seconds': int(os.getenv('AUTO_PUMP_COOLDOWN_SECONDS', '600')),
+                'duration_seconds': int(os.getenv('AUTO_PUMP_DURATION_SECONDS', os.getenv('WATER_PUMP_DEFAULT_DURATION', '5'))),
+                'dry_confirmations': int(os.getenv('AUTO_PUMP_DRY_CONFIRMATIONS', '2')),
+                'consecutive_dry': _AUTO_PUMP_STATE.get('consecutive_dry', 0),
+                'last_run_at': _AUTO_PUMP_STATE.get('last_run_ts'),
+                'last_seen_status': _AUTO_PUMP_STATE.get('last_seen_status'),
+                'last_seen_at': _AUTO_PUMP_STATE.get('last_seen_ts'),
+                'scheduler_available': scheduler is not None,
+            }), 200
+
+        payload = request.get_json(silent=True) or {}
+        if 'enabled' not in payload:
+            raise ValueError('enabled (true/false) is required')
+
+        enabled = bool(payload.get('enabled'))
+        settings = _load_auto_pump_settings()
+        settings['enabled'] = enabled
+        settings['updated_at'] = datetime.now().isoformat()
+        _save_auto_pump_settings(settings)
+
+        if not enabled:
+            _AUTO_PUMP_STATE['consecutive_dry'] = 0
+
+        return jsonify({
+            'message': f"Automatic watering turned {'ON' if enabled else 'OFF'}",
+            'enabled': enabled,
+        }), 200
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

@@ -9,9 +9,19 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initializeApp() {
+    // Reset any toggle-able sections back to their default hidden state and scroll to
+    // top. Without this, a bfcache restore (or a browser scroll-restoration edge case
+    // scrollRestoration='manual' doesn't fully cover) can leave the page looking like it
+    // landed on Spread Risk/Trends instead of Home after login or a refresh.
+    ['weatherAlertSection', 'spreadRiskSection', 'trendsSection', 'riskMapSection'].forEach((id) => {
+        const section = document.getElementById(id);
+        if (section) section.style.display = 'none';
+    });
+    window.scrollTo(0, 0);
+
     // Check authentication first
     verifyAuthentication();
-    
+
     // Setup event listeners
     setupUploadArea();
     
@@ -51,21 +61,32 @@ function loadDiseaseSpreadRisk() {
     return Promise.resolve();
 }
 
+// Pages that don't require a session; app.js is included on some of these too
+// (e.g. login.html), so verifyAuthentication() must not redirect to /login while
+// already there — doing so caused an infinite reload loop on the login page.
+const PUBLIC_PATHS = ['/login', '/signup', '/', '/about'];
+
 function verifyAuthentication() {
+    if (PUBLIC_PATHS.includes(window.location.pathname)) {
+        return;
+    }
+
     fetch('/api/verify-session')
         .then(response => response.json())
         .then(data => {
             if (data.authenticated) {
                 currentUser = data.user;
                 updateUserUI();
-            } else {
+            } else if (!PUBLIC_PATHS.includes(window.location.pathname)) {
                 // Redirect to login if not authenticated
                 window.location.href = '/login';
             }
         })
         .catch(error => {
             console.error('Error verifying session:', error);
-            window.location.href = '/login';
+            if (!PUBLIC_PATHS.includes(window.location.pathname)) {
+                window.location.href = '/login';
+            }
         });
 }
 
@@ -791,11 +812,13 @@ document.addEventListener('DOMContentLoaded', function() {
         videoInput.addEventListener('change', handleVideoUpload);
     }
 
-    // Load weather alerts and risk map on page load
+    // Load weather alerts on page load (shows a small banner, no scrolling).
+    // Do NOT auto-load the risk map here: showRiskMap() force-displays the
+    // Spread Risk section AND scrolls the page into it, which is only meant
+    // to happen when the user clicks "Spread Risk" in the sidebar. Calling it
+    // on every page load was the cause of the dashboard appearing to auto
+    // scroll down to Spread Risk after every login/refresh.
     loadWeatherRecommendations();
-    if (typeof loadDiseaseSpreadRisk === 'function') {
-        loadDiseaseSpreadRisk();
-    }
 });
 
 // ============================================

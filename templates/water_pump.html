@@ -21,6 +21,17 @@
             padding: 30px 20px;
         }
 
+        .pump-row {
+            display: flex;
+            gap: 24px;
+            align-items: stretch;
+            flex-wrap: wrap;
+        }
+
+        .pump-row .pump-card {
+            flex: 1 1 320px;
+        }
+
         .pump-card {
             background: white;
             border-radius: var(--border-radius);
@@ -337,6 +348,7 @@
         </header>
 
         <div class="pump-container">
+            <div class="pump-row">
             <div class="pump-card">
                 <h2 data-i18n="pump_status">Pump Status</h2>
 
@@ -364,6 +376,31 @@
                 </div>
 
                 <div id="errorBox" class="error-box"></div>
+            </div>
+
+            <div class="pump-card">
+                <h2><i class="fas fa-robot"></i> Automatic Watering (Soil Moisture)</h2>
+                <p style="color: #666; margin-bottom: 16px;">Automatically waters the plant once soil moisture stays dry.</p>
+
+                <div class="pump-status">
+                    <div id="autoStatusPill" class="status-pill status-off">
+                        <i class="fas fa-power-off"></i>
+                        <span id="autoStatusText">OFF</span>
+                    </div>
+                    <div class="status-meta" id="autoStatusMeta">--</div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn btn-success" id="btnAutoOn" onclick="toggleAutoPump(true)">
+                        <i class="fas fa-toggle-on"></i> Enable Auto
+                    </button>
+                    <button class="btn btn-secondary" id="btnAutoOff" onclick="toggleAutoPump(false)">
+                        <i class="fas fa-toggle-off"></i> Disable Auto
+                    </button>
+                </div>
+
+                <div id="autoErrorBox" class="error-box"></div>
+            </div>
             </div>
 
             <div class="feature-grid">
@@ -466,9 +503,10 @@
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     <script>
         let refreshTimer;
+        let autoPumpEnabled = false;
 
         function setBusy(isBusy) {
-            ['btnOn', 'btnOff', 'btnRun', 'btnRefresh', 'btnCreateSchedule', 'btnPredictGrowth'].forEach(id => {
+            ['btnOn', 'btnOff', 'btnRun', 'btnRefresh', 'btnCreateSchedule', 'btnPredictGrowth', 'btnAutoOn', 'btnAutoOff'].forEach(id => {
                 const btn = document.getElementById(id);
                 if (btn) btn.disabled = isBusy;
             });
@@ -544,9 +582,13 @@
             renderWateringScheduleChart(payload);
 
             if (summary) {
-                summary.textContent = schedulerAvailable
-                    ? `${schedules.length} saved watering schedule${schedules.length === 1 ? '' : 's'} available.`
-                    : 'Schedules are saved, but APScheduler is unavailable so they will not run automatically.';
+                if (autoPumpEnabled) {
+                    summary.textContent = 'Automatic watering is ON, so scheduled watering times below are paused (skipped) until you turn it off.';
+                } else {
+                    summary.textContent = schedulerAvailable
+                        ? `${schedules.length} saved watering schedule${schedules.length === 1 ? '' : 's'} available.`
+                        : 'Schedules are saved, but APScheduler is unavailable so they will not run automatically.';
+                }
             }
 
             if (!schedules.length) {
@@ -561,6 +603,12 @@
                     : 'Every day';
                 const nextRun = schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '--';
                 const lastRun = schedule.last_run_at ? formatDateTime(schedule.last_run_at) : '--';
+                const statusLabels = {
+                    completed: 'Completed',
+                    error: 'Error',
+                    skipped_auto_mode: 'Skipped (auto watering was ON)',
+                };
+                const lastRunStatus = schedule.last_run_status ? (statusLabels[schedule.last_run_status] || schedule.last_run_status) : '';
 
                 return `
                     <div class="schedule-item">
@@ -570,7 +618,7 @@
                                 <div><strong>Time:</strong> ${schedule.time || '--'} | <strong>Duration:</strong> ${schedule.duration_seconds || '--'}s</div>
                                 <div><strong>Days:</strong> ${dayLabel}</div>
                                 <div><strong>Next run:</strong> ${nextRun}</div>
-                                <div><strong>Last run:</strong> ${lastRun}</div>
+                                <div><strong>Last run:</strong> ${lastRun}${lastRunStatus ? ` (${lastRunStatus})` : ''}</div>
                             </div>
                         </div>
                         <div>
@@ -1074,9 +1122,73 @@
             }
         }
 
+        function renderAutoStatus(data) {
+            const pill = document.getElementById('autoStatusPill');
+            const text = document.getElementById('autoStatusText');
+            const meta = document.getElementById('autoStatusMeta');
+            if (!pill || !text || !meta) return;
+
+            const enabled = !!data.enabled;
+            const autoStateChanged = autoPumpEnabled !== enabled;
+            autoPumpEnabled = enabled;
+            pill.className = `status-pill ${enabled ? 'status-on' : 'status-off'}`;
+            text.textContent = enabled ? 'AUTO ON' : 'AUTO OFF';
+            if (autoStateChanged) {
+                loadSchedules();
+            }
+
+            if (!enabled) {
+                meta.textContent = 'Automatic watering is off.';
+                return;
+            }
+
+            const soil = data.last_seen_status ? data.last_seen_status.toUpperCase() : 'unknown';
+            const dry = data.consecutive_dry || 0;
+            const needed = data.dry_confirmations || 2;
+            const lastRun = data.last_run_at ? formatDateTime(data.last_run_at) : 'never';
+            meta.textContent = `Soil: ${soil} • Dry checks: ${dry}/${needed} • Last auto-run: ${lastRun}`;
+        }
+
+        async function loadAutoStatus() {
+            try {
+                const res = await fetch('/api/water-pump/auto');
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to load automatic watering status');
+                }
+                renderAutoStatus(data);
+            } catch (e) {
+                showSectionError('autoErrorBox', e.message);
+            }
+        }
+
+        async function toggleAutoPump(enabled) {
+            setBusy(true);
+            showSectionError('autoErrorBox', '');
+            try {
+                const res = await fetch('/api/water-pump/auto', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to update automatic watering');
+                }
+                await loadAutoStatus();
+            } catch (e) {
+                showSectionError('autoErrorBox', e.message);
+            } finally {
+                setBusy(false);
+            }
+        }
+
         function startAutoRefresh() {
             stopAutoRefresh();
-            refreshTimer = setInterval(refreshStatus, 5000);
+            refreshTimer = setInterval(() => {
+                refreshStatus();
+                loadAutoStatus();
+            }, 5000);
         }
 
         function stopAutoRefresh() {
@@ -1087,6 +1199,7 @@
         window.addEventListener('load', () => {
             setDefaultPlantingDate();
             refreshStatus();
+            loadAutoStatus();
             loadSchedules();
             loadGrowthPrediction();
             startAutoRefresh();

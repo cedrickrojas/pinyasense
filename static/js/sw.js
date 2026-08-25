@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pinasense-v1';
+const CACHE_NAME = 'pinasense-v2';
 const CORE_ASSETS = [
   '/',
   '/manifest.webmanifest',
@@ -36,6 +36,18 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // Never cache/serve page navigations (dashboard, login, etc.) from the SW cache.
+  // These are session-dependent and change often (e.g. which section shows on load);
+  // serving a stale cached copy caused the dashboard to reappear scrolled into an old
+  // section after login/refresh even after the underlying page was fixed. Only static
+  // assets (css/js/icons) below get the offline-friendly cache-and-fallback treatment.
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(
+      fetch(request).catch(() => caches.match('/'))
+    );
     return;
   }
 

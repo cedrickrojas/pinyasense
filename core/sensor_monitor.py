@@ -648,26 +648,36 @@ class SensorMonitor:
                 is_live = True
             elif DHT_CIRCUITPY_AVAILABLE:
                 # Read using CircuitPython backend (recommended for newer Pi)
-                if self.dht_device is None:
-                    if self.DHT_PIN == 27:
-                        dht_pin = blinka_pin.D27
-                    elif self.DHT_PIN == 4:
-                        dht_pin = blinka_pin.D4
-                    else:
-                        raise Exception(f"Unsupported DHT pin for CircuitPython backend: GPIO {self.DHT_PIN}")
-                    self.dht_device = adafruit_dht.DHT22(dht_pin, use_pulseio=False)
-
                 temperature = None
                 humidity = None
                 last_error = None
                 for _ in range(3):
                     try:
+                        if self.dht_device is None:
+                            if self.DHT_PIN == 27:
+                                dht_pin = blinka_pin.D27
+                            elif self.DHT_PIN == 4:
+                                dht_pin = blinka_pin.D4
+                            else:
+                                raise Exception(f"Unsupported DHT pin for CircuitPython backend: GPIO {self.DHT_PIN}")
+                            self.dht_device = adafruit_dht.DHT22(dht_pin, use_pulseio=False)
+
                         temperature = self.dht_device.temperature
                         humidity = self.dht_device.humidity
                         if humidity is not None and temperature is not None:
                             break
                     except Exception as read_error:
                         last_error = read_error
+                        # adafruit_dht can leave the GPIO line claimed ("GPIO busy") after a
+                        # failed read; release it and force a fresh device next attempt
+                        # instead of reusing the same wedged object forever.
+                        try:
+                            if self.dht_device is not None:
+                                self.dht_device.exit()
+                        except Exception:
+                            pass
+                        self.dht_device = None
+                        time.sleep(0.5)
 
                 if humidity is None or temperature is None:
                     # no response from sensor
