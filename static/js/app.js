@@ -2,11 +2,38 @@
 let selectedFile = null;
 let detectionResults = null;
 let currentUser = null;
+let singleDetectionMarkup = null;
+
+function getResultsSection(restoreSingle = false) {
+    const section = document.getElementById('resultsSection');
+    if (!section) return null;
+    if (singleDetectionMarkup === null && document.getElementById('diseaseBadge')) {
+        singleDetectionMarkup = section.innerHTML;
+    }
+    if (restoreSingle && singleDetectionMarkup !== null) section.innerHTML = singleDetectionMarkup;
+    return section;
+}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
+    settleMobileInputFocus();
     initializeApp();
 });
+
+function dismissMobileInputFocus() {
+    const activeElement = document.activeElement;
+    if (activeElement && typeof activeElement.blur === 'function') {
+        activeElement.blur();
+    }
+    window.scrollTo(0, 0);
+}
+
+function settleMobileInputFocus() {
+    dismissMobileInputFocus();
+    [100, 350, 700].forEach((delay) => {
+        window.setTimeout(dismissMobileInputFocus, delay);
+    });
+}
 
 function initializeApp() {
     // Reset any toggle-able sections back to their default hidden state and scroll to
@@ -94,6 +121,11 @@ function updateUserUI() {
     // Add user info to sidebar if available
     const sidebar = document.querySelector('.sidebar-menu');
     if (sidebar && currentUser) {
+        const existingAdminLink = document.querySelector('.admin-staff-item');
+        if (existingAdminLink) {
+            existingAdminLink.remove();
+        }
+
         // Remove existing logout item if present
         const existingLogout = document.querySelector('.logout-item');
         if (existingLogout) {
@@ -284,11 +316,12 @@ async function detectDisease() {
             body: formData
         });
         
-        if (!response.ok) {
-            throw new Error('Detection failed');
-        }
-        
         const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error || result.message || 'Detection failed');
+        }
+
         detectionResults = result;
         
         // Hide loading and show results
@@ -308,7 +341,8 @@ async function detectDisease() {
 }
 
 function displayResults(result) {
-    const resultsSection = document.getElementById('resultsSection');
+    const resultsSection = getResultsSection(true);
+    if (!resultsSection) return;
     resultsSection.style.display = 'block';
 
     if (result.not_pineapple || result.error === 'Not a pineapple image. Disease detection skipped.') {
@@ -319,7 +353,7 @@ function displayResults(result) {
                     <i class="fas fa-leaf"></i>
                     <div class="error-content">
                         <div class="error-title">Not a Pineapple Image</div>
-                        <div class="error-message">${result.error || 'Please upload a pineapple leaf or fruit image so the disease detector can analyze it.'}</div>
+                        <div class="error-message">${escapeHtml(result.error || 'Please upload a pineapple leaf or fruit image so the disease detector can analyze it.')}</div>
                     </div>
                 </div>
             </div>
@@ -503,8 +537,12 @@ function buildImmediateActionPlaybook(disease, severity, result) {
 }
 
 async function loadStats() {
+    const counters = ['totalDetections', 'healthyCount', 'diseaseCount']
+        .map(id => document.getElementById(id));
+    if (counters.some(counter => !counter)) return;
     try {
         const response = await fetch('/api/stats');
+        if (!response.ok) throw new Error('Detection statistics are unavailable');
         const data = await response.json();
         
         document.getElementById('totalDetections').textContent = data.total_detections;
@@ -512,8 +550,17 @@ async function loadStats() {
         
         const diseaseCount = data.total_detections - (data.disease_count['Healthy'] || 0);
         document.getElementById('diseaseCount').textContent = diseaseCount;
+        const description = data.data_source === 'local'
+            ? 'Showing locally saved detections.'
+            : data.data_source === 'mixed' ? 'Showing cloud and locally saved detections.'
+            : 'Showing saved cloud detections.';
+        counters.forEach(counter => { counter.title = description; });
         
     } catch (error) {
+        counters.forEach(counter => {
+            counter.textContent = '\u2014';
+            counter.title = 'Unable to load detection statistics. Please try again.';
+        });
         console.error('Error loading stats:', error);
     }
 }
@@ -861,7 +908,7 @@ async function handleBatchUpload(event) {
 }
 
 function displayBatchResults(data) {
-    const resultsSection = document.getElementById('resultsSection');
+    const resultsSection = getResultsSection();
     if (!resultsSection) return;
 
     let html = `
@@ -879,9 +926,9 @@ function displayBatchResults(data) {
     data.results.forEach((result, index) => {
         html += `
             <div class="batch-result-card">
-                <h3>${index + 1}. ${result.disease}</h3>
+                <h3>${index + 1}. ${escapeHtml(result.disease)}</h3>
                 <p>Confidence: ${(result.confidence * 100).toFixed(1)}%</p>
-                <p>Method: ${result.method}</p>
+                <p>Method: ${escapeHtml(result.method)}</p>
             </div>
         `;
     });
@@ -923,7 +970,7 @@ async function handleVideoUpload(event) {
 }
 
 function displayVideoResults(result) {
-    const resultsSection = document.getElementById('resultsSection');
+    const resultsSection = getResultsSection();
     if (!resultsSection) return;
 
     let html = `
@@ -932,7 +979,7 @@ function displayVideoResults(result) {
             <div class="result-header">
                 <div class="disease-badge">
                     <i class="fas fa-virus"></i>
-                    <span>${result.disease}</span>
+                    <span>${escapeHtml(result.disease)}</span>
                 </div>
                 <div class="confidence-score">
                     <div class="confidence-circle">
@@ -942,13 +989,13 @@ function displayVideoResults(result) {
             </div>
             <div class="result-details">
                 <p><strong>Frames Analyzed:</strong> ${result.frame_count}</p>
-                <p><strong>Detection Method:</strong> ${result.method}</p>
+                <p><strong>Detection Method:</strong> ${escapeHtml(result.method)}</p>
                 <p><strong>Disease Distribution:</strong></p>
                 <ul>
     `;
 
     for (const [disease, count] of Object.entries(result.disease_distribution)) {
-        html += `<li>${disease}: ${count} frames</li>`;
+        html += `<li>${escapeHtml(disease)}: ${Number(count)} frames</li>`;
     }
 
     html += `</ul></div></div>`;
@@ -1067,7 +1114,7 @@ async function loadWeatherRecommendations() {
 
         const data = await response.json();
         
-        if (data.error || response.status !== 200) {
+        if (data.error || data.available === false || response.status !== 200) {
             return;
         }
 
@@ -1167,70 +1214,3 @@ async function showRiskMap() {
     }
 }
 
-// ============================================
-// MULTILINGUAL SUPPORT
-// ============================================
-async function changeLanguage() {
-    const select = document.getElementById('languageSelect');
-    if (!select) return;
-
-    currentLanguage = select.value;
-    document.documentElement.lang = currentLanguage;
-    
-    try {
-        const response = await fetch(`/api/translations/${currentLanguage}`);
-        const translations = await response.json();
-
-        if (!response.ok) {
-            throw new Error(translations.error || 'Unable to load translations');
-        }
-
-        if (translations.page_title) {
-            document.title = translations.page_title;
-        }
-        
-        // Update all elements with data-i18n attribute
-        document.querySelectorAll('[data-i18n]').forEach(element => {
-            const key = element.getAttribute('data-i18n');
-            if (translations[key]) {
-                element.textContent = translations[key];
-            }
-        });
-
-        // Store language preference in localStorage and cookie (1 year)
-        localStorage.setItem('preferredLanguage', currentLanguage);
-        try {
-            const expires = new Date();
-            expires.setFullYear(expires.getFullYear() + 1);
-            document.cookie = `preferredLanguage=${currentLanguage}; expires=${expires.toUTCString()}; path=/`;
-        } catch (e) {
-            console.warn('Could not set language cookie', e);
-        }
-        
-    } catch (error) {
-        console.error('Error changing language:', error);
-        document.documentElement.lang = 'en';
-    }
-}
-
-// Read cookie value by name
-function readCookie(name) {
-    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-    return match ? match[2] : null;
-}
-
-// Load preferred language on startup (cookie preferred over localStorage)
-function loadPreferredLanguage() {
-    const cookieLang = readCookie('preferredLanguage');
-    const storageLang = localStorage.getItem('preferredLanguage');
-    const preferred = cookieLang || storageLang || 'en';
-    const select = document.getElementById('languageSelect');
-    if (select) {
-        select.value = preferred;
-    }
-    // Defer changeLanguage call so other scripts can initialize
-    setTimeout(() => { changeLanguage(); }, 50);
-}
-
-// Call on page load
-document.addEventListener('DOMContentLoaded', loadPreferredLanguage);

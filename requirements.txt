@@ -5,7 +5,6 @@ Werkzeug==3.0.1
 
 # Image Processing
 opencv-python==4.8.1.78
-opencv-contrib-python==4.8.1.78
 Pillow==10.1.0
 numpy==1.24.3
 
@@ -36,6 +35,7 @@ APScheduler>=3.10.1
 
 # Utilities
 python-dateutil==2.8.2
+pyserial>=3.5
 
 # Development
 python-dotenv==1.0.0
@@ -43,5 +43,4 @@ python-dotenv==1.0.0
 # Sensor Libraries (for Raspberry Pi GPIO)
 # Uncomment if running on actual Raspberry Pi with sensors
 # RPi.GPIO==0.7.1
-# Adafruit-DHT==1.4.0
 # spidev==3.6  # For ADC (e.g., MCP3008)

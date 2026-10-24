@@ -1,0 +1,2 @@
+# Install application requirements separately in the existing Python environment.
+pytest>=8,<9

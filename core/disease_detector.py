@@ -22,6 +22,9 @@ class PineappleDiseaseDetector:
             'models/pineapple_disease_model.pt'
         ]
         
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        possible_paths = [path if os.path.isabs(path) else os.path.join(project_root, path)
+                          for path in possible_paths if path]
         self.model_path = None
         for path in possible_paths:
             if path and os.path.exists(path):
@@ -30,6 +33,7 @@ class PineappleDiseaseDetector:
         
         self.model = None
         self.model_type = None  # 'keras', 'pytorch', or 'yolov8'
+        self.scene_model = None
         self.num_classes = None
         self.metadata = None
         self.metadata_path = None
@@ -49,24 +53,24 @@ class PineappleDiseaseDetector:
         ]
         # YOLOv8 classes mapping
         self.yolov8_disease_map = {
-            'CrownRot': 'Heart Rot',
-            'FruitFasciation': 'Fruit Rot',
+            'CrownRot': 'Crown Rot',
+            'FruitFasciation': 'Fruit Fasciation Disorder',
             'FruitRot': 'Fruit Rot',
-            'MealybugWilt': 'Yellow Spot',
-            'RootRot': 'Pink Disease',
-            'MultipleCrown': 'Pink Disease',
-            'Healthy': 'Healthy'
+            'MealybugWilt': 'Mealybug Wilt',
+            'RootRot': 'Root Rot',
+            'MultipleCrown': 'Multiple Crown Disorder',
+            'Healthy': 'Healthy',
+            'Heart_Rot_Disease': 'Heart Rot',
+            'Fruit_Rot_Disease': 'Fruit Rot',
+            'Yellow_Spot_Disease': 'Yellow Spot',
+            'Pink_Disease': 'Pink Disease',
+            'Fruit_Fasciation_Disorder': 'Fruit Fasciation Disorder',
+            **{name: name for name in self.diseases_5},
         }
         self.diseases = self.diseases_5  # Default
 
-        # Keras metadata class mapping to existing recommendation keys
-        self.keras_class_map = {
-            'CrownRot': 'Heart Rot',
-            'FruitRot': 'Fruit Rot',
-            'MealybugWilt': 'Yellow Spot',
-            'RootRot': 'Pink Disease',
-            'Healthy': 'Healthy'
-        }
+        # Both model backends must preserve the condition named by their labels.
+        self.keras_class_map = self.yolov8_disease_map
 
         self.metadata_candidates = []
         if self.model_path:
@@ -74,8 +78,8 @@ class PineappleDiseaseDetector:
             if model_dir:
                 self.metadata_candidates.append(os.path.join(model_dir, 'pineapple_model_metadata.json'))
         self.metadata_candidates.extend([
-            'models/pineapple_model_metadata.json',
-            'pineapple_model_metadata.json'
+            os.path.join(project_root, 'models', 'pineapple_model_metadata.json'),
+            os.path.join(project_root, 'pineapple_model_metadata.json')
         ])
 
         # Read metadata first so class names and input settings are available immediately.
@@ -87,6 +91,40 @@ class PineappleDiseaseDetector:
         else:
             print(f"Warning: No model found")
             print("Using rule-based detection as fallback")
+
+        self.load_scene_model()
+
+    def load_scene_model(self):
+        """Load the general COCO model used to reject obvious non-plant scenes."""
+        scene_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'yolov8n.pt')
+        if not os.path.exists(scene_path):
+            return
+        try:
+            from ultralytics import YOLO
+            self.scene_model = YOLO(scene_path)
+            print(f"✅ Scene validation model loaded from {scene_path}")
+        except Exception as e:
+            print(f"⚠️ Scene validation model unavailable: {e}")
+
+    def detect_scene_objects(self, image_path):
+        """Return obvious non-plant objects detected by the general model."""
+        if self.scene_model is None:
+            return []
+        try:
+            results = self.scene_model.predict(image_path, verbose=False, conf=0.35)
+            blocked = {'person', 'cat', 'dog', 'bird', 'car', 'motorcycle', 'bicycle'}
+            objects = []
+            for result in results or []:
+                if result.boxes is None:
+                    continue
+                for box in result.boxes:
+                    name = result.names[int(box.cls[0])]
+                    if name in blocked:
+                        objects.append(name)
+            return sorted(set(objects))
+        except Exception as e:
+            print(f"⚠️ Scene validation failed: {e}")
+            return []
 
     def load_metadata(self):
         """Load model metadata JSON if available."""
@@ -118,70 +156,36 @@ class PineappleDiseaseDetector:
                 print(f"Warning: Failed to load metadata from {candidate}: {e}")
     
     def load_model(self):
-        """Load the trained model (supports Keras, PyTorch, and YOLOv8)"""
+        """Load supported checkpoints by their contents, including YOLO best.pt."""
         try:
-            # Check model type by extension
-            if self.model_path.endswith('.pt'):
-                # Check if it's a YOLOv8 model
-                if 'yolov8' in self.model_path.lower():
-                    # Load YOLOv8 model
-                    try:
-                        from ultralytics import YOLO
-                        self.model = YOLO(self.model_path)
-                        self.model_type = 'yolov8'
-                        print(f"✅ YOLOv8 model loaded successfully from {self.model_path}")
-                        print(f"   Model type: Object Detection (YOLO)")
-                    except Exception as e:
-                        print(f"Error loading YOLOv8 model: {e}")
-                        self.model = None
-                else:
-                    # Load as regular PyTorch model
-                    try:
-                        import torch
-                        self.model = torch.load(self.model_path)
-                        self.model.eval()
-                        self.model_type = 'pytorch'
-                        print(f"✅ PyTorch model loaded successfully from {self.model_path}")
-                    except Exception as e:
-                        print(f"Error loading PyTorch model: {e}")
-                        self.model = None
-            elif self.model_path.endswith('.keras') or self.model_path.endswith('.h5'):
-                # Load Keras/TensorFlow model
+            extension = os.path.splitext(self.model_path)[1].lower()
+            if extension == '.pt':
                 try:
-                    import tensorflow as tf
-                    self.model = tf.keras.models.load_model(self.model_path)
-                    self.model_type = 'keras'
-                    # Detect number of classes from model output shape
-                    output_shape = self.model.output_shape
-                    self.num_classes = output_shape[-1] if output_shape else 5
-
-                    # If metadata has class labels and matches model output, prioritize metadata labels.
-                    if self.metadata and self.metadata.get('classes'):
-                        mapped_classes = [
-                            self.keras_class_map.get(c, c)
-                            for c in self.metadata.get('classes', [])
-                        ]
-                        if len(mapped_classes) == self.num_classes:
-                            self.diseases = mapped_classes
-                        elif self.num_classes == 3:
-                            self.diseases = self.diseases_3
-                        else:
-                            self.diseases = self.diseases_5
-                    elif self.num_classes == 3:
-                        self.diseases = self.diseases_3
-                    else:
-                        self.diseases = self.diseases_5
-
-                    print(f"✅ Keras model loaded successfully from {self.model_path}")
-                    print(f"   Model expects input: {self.model.input_shape}")
-                    print(f"   Model outputs {self.num_classes} classes")
-                    print(f"   Active labels: {self.diseases}")
-                except Exception as e:
-                    print(f"Error loading Keras model: {e}")
-                    self.model = None
-        except Exception as e:
-            print(f"Error loading model: {e}")
+                    from ultralytics import YOLO
+                    self.model = YOLO(self.model_path)
+                    self.model_type = 'yolov8'
+                except Exception:
+                    import torch
+                    self.model = torch.load(self.model_path, map_location='cpu')
+                    self.model.eval()
+                    self.model_type = 'pytorch'
+            elif extension in {'.keras', '.h5'}:
+                import tensorflow as tf
+                self.model = tf.keras.models.load_model(self.model_path, compile=False)
+                self.model_type = 'keras'
+                self.num_classes = self.model.output_shape[-1]
+                classes = self.metadata.get('classes', []) if self.metadata else []
+                mapped = [self.keras_class_map.get(name, name) for name in classes]
+                if len(mapped) == self.num_classes:
+                    self.diseases = mapped
+                else:
+                    self.diseases = self.diseases_3 if self.num_classes == 3 else self.diseases_5
+            if self.model is not None:
+                print(f'Model loaded: {self.model_type} ({self.model_path})')
+        except Exception as error:
+            print(f'Error loading model: {error}')
             self.model = None
+            self.model_type = None
     
     def preprocess_image(self, image_path):
         """Preprocess image for detection"""
@@ -239,7 +243,11 @@ class PineappleDiseaseDetector:
         pineapple_score = (color_score * 0.7) + (texture_score * 0.3)
 
         # Pineapple images usually have enough plant/fruit coloration and edge detail.
-        is_pineapple = pineapple_score >= 0.18 or (green_ratio >= 0.10 and edge_density >= 0.03)
+        # Reject generic green plants and textured backgrounds. The previous low
+        # threshold allowed almost any leafy image to reach disease inference.
+        is_pineapple = pineapple_score >= 0.40 and (
+            yellow_ratio >= 0.08 or brown_ratio >= 0.08 or green_ratio >= 0.18
+        )
 
         return is_pineapple, pineapple_score, {
             'green_ratio': round(green_ratio, 4),
@@ -319,14 +327,14 @@ class PineappleDiseaseDetector:
             results = self.model.predict(image_path, verbose=False, conf=0.5)
             
             if not results or len(results) == 0:
-                return 'Healthy', 0.7, None
+                return None, None, {'num_bboxes': 0, 'reason': 'no_pineapple_object_detected'}
             
             result = results[0]
             boxes = result.boxes
             
             if boxes is None or len(boxes) == 0:
                 # No objects detected
-                return 'Healthy', 0.7, None
+                return None, None, {'num_bboxes': 0, 'reason': 'no_pineapple_object_detected'}
             
             # Get detections
             detected_classes = {}
@@ -338,7 +346,9 @@ class PineappleDiseaseDetector:
                 class_name = result.names[class_id]
                 
                 # Map YOLOv8 class names to our disease names
-                mapped_disease = self.yolov8_disease_map.get(class_name, class_name)
+                mapped_disease = self.yolov8_disease_map.get(class_name)
+                if not mapped_disease:
+                    continue
                 
                 if mapped_disease not in detected_classes:
                     detected_classes[mapped_disease] = []
@@ -347,7 +357,10 @@ class PineappleDiseaseDetector:
             
             # Determine final disease
             if not detected_classes:
-                return 'Healthy', 0.7, None
+                return None, None, {
+                    'num_bboxes': 0,
+                    'reason': 'no_recognized_pineapple_object_detected'
+                }
             
             # Find disease with highest average confidence
             disease_confidences = {
@@ -429,6 +442,19 @@ class PineappleDiseaseDetector:
             img, img_rgb = self.preprocess_image(image_path)
             is_pineapple, pineapple_score, pineapple_analysis = self.validate_pineapple_image(img)
 
+            scene_objects = self.detect_scene_objects(image_path)
+            if scene_objects:
+                return {
+                    'error': 'Not a pineapple image. Remove people or unrelated objects from the frame.',
+                    'not_pineapple': True,
+                    'disease': 'Not Pineapple',
+                    'confidence': 0.0,
+                    'method': 'scene-validation',
+                    'timestamp': datetime.now().isoformat(),
+                    'image_path': image_path,
+                    'analysis': {'blocked_objects': scene_objects}
+                }
+
             if not is_pineapple:
                 return {
                     'error': 'Not a pineapple image. Disease detection skipped.',
@@ -456,13 +482,29 @@ class PineappleDiseaseDetector:
             # Try YOLOv8 detection first if model is YOLOv8
             if self.model is not None and self.model_type == 'yolov8':
                 disease, confidence, analysis = self.yolov8_detection(image_path)
-                if disease is not None:
-                    method = 'yolov8'
-                else:
-                    # Fallback to rule-based
-                    img, img_rgb = self.preprocess_image(image_path)
-                    disease, confidence, analysis = self.rule_based_detection(img)
-                    method = 'rule-based'
+                if disease is None:
+                    return {
+                        'error': 'Not a pineapple image. No pineapple plant or fruit was detected.',
+                        'not_pineapple': True,
+                        'disease': 'Not Pineapple',
+                        'confidence': 0.0,
+                        'method': 'yolov8-validation',
+                        'timestamp': datetime.now().isoformat(),
+                        'image_path': image_path,
+                        'analysis': analysis or {'reason': 'no_pineapple_object_detected'}
+                    }
+                if pineapple_score < 0.40:
+                    return {
+                        'error': 'Not a pineapple image. Please capture a pineapple plant or fruit.',
+                        'not_pineapple': True,
+                        'disease': 'Not Pineapple',
+                        'confidence': 0.0,
+                        'method': 'visual-validation',
+                        'timestamp': datetime.now().isoformat(),
+                        'image_path': image_path,
+                        'analysis': pineapple_analysis
+                    }
+                method = 'yolov8'
             else:
                 # Preprocess image for other models
                 img, img_rgb = self.preprocess_image(image_path)

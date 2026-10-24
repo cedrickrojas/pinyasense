@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Detection History - AgriPinya</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/legal.css') }}">
+    <style>
+        .records { overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #475569; }
+    </style>
+</head>
+<body>
+    <main class="legal-card">
+        <a href="/dashboard">Back to dashboard</a>
+        <h1>Detection History</h1>
+        <p id="status" role="status">Loading saved detections...</p>
+        <div class="records">
+            <table>
+                <thead><tr><th scope="col">Date</th><th scope="col">Result</th><th scope="col">Confidence</th><th scope="col">Media</th></tr></thead>
+                <tbody id="records"></tbody>
+            </table>
+        </div>
+    </main>
+    <script>
+        async function loadRecords() {
+            const status = document.getElementById('status');
+            try {
+                const response = await fetch('/api/training-results');
+                if (!response.ok) throw new Error('Unable to load saved detections. Please sign in and try again.');
+                const data = await response.json();
+                const records = document.getElementById('records');
+                for (const result of data.results) {
+                    const row = document.createElement('tr');
+                    for (const value of [result.timestamp || 'Unknown', result.disease || 'Unknown',
+                        `${Math.round((result.confidence || 0) * 100)}%`, result.media_type || 'image']) {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    }
+                    records.appendChild(row);
+                }
+                status.textContent = data.results.length ? `${data.results.length} saved detections` : 'No saved detections yet.';
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        }
+        loadRecords();
+    </script>
+</body>
+</html>

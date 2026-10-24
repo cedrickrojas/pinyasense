@@ -85,6 +85,27 @@ body::before {
     z-index: 1000;
     transition: var(--transition);
     border-right: 1px solid rgba(255, 255, 255, 0.1);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(16, 185, 129, 0.85) rgba(15, 23, 42, 0.45);
+    overscroll-behavior: contain;
+}
+
+.sidebar::-webkit-scrollbar {
+    width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.85);
+    border-radius: 999px;
+    border: 2px solid rgba(15, 23, 42, 0.45);
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+    background: #34d399;
 }
 
 .sidebar-header {
@@ -1035,6 +1056,7 @@ body::before {
     .sidebar {
         -webkit-overflow-scrolling: touch;
         overflow-y: auto;
+        max-height: 100svh;
         padding-bottom: 3rem;
     }
 
@@ -2243,33 +2265,9 @@ body::before {
 /* NEW FEATURES: BATCH, TRENDS, EXPORT, etc. */
 /* ============================================ */
 
-/* Language Selector */
-.language-selector {
-    margin-top: 15px;
-    padding-top: 15px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
 
-.language-selector select {
-    width: 100%;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: var(--border-radius);
-    color: white;
-    font-size: 0.9em;
-    cursor: pointer;
-    transition: var(--transition);
-}
 
-.language-selector select:hover {
-    background: rgba(255, 255, 255, 0.15);
-}
 
-.language-selector select option {
-    background: var(--sidebar-bg);
-    color: white;
-}
 
 /* Alert Sections */
 .alert-section {
@@ -2531,9 +2529,6 @@ body::before {
         grid-template-columns: repeat(2, 1fr);
     }
 
-    .language-selector {
-        margin-bottom: 10px;
-    }
 }
 
 /* Tablet Responsive (769px - 1024px) */

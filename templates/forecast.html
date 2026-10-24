@@ -9,12 +9,17 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
     <title>Growth Forecast - AgriPinya</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+        [hidden] {
+            display: none !important;
+        }
+
         .forecast-container {
             max-width: 1200px;
             margin: 0 auto;
@@ -118,19 +123,6 @@
             font-size: 1.05rem;
         }
 
-        .notes-box {
-            background: white;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            padding: 20px;
-        }
-
-        .notes-box ul {
-            margin: 8px 0 0;
-            padding-left: 18px;
-            color: #475569;
-        }
-
         .error-box {
             margin-top: 14px;
             background: #fee2e2;
@@ -141,6 +133,754 @@
             display: none;
         }
 
+        /* ---- Monitoring sections ---- */
+        .panel-card {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 22px;
+            margin-bottom: 22px;
+        }
+
+        .card-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+
+        .card-heading h2 {
+            margin: 0;
+            color: #1f2937;
+            font-size: 1.15rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-heading h2 i {
+            color: #1f7a63;
+        }
+
+        .card-hint {
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+
+        .section-title {
+            color: white;
+            font-size: 1.2rem;
+            margin: 4px 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .monitor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+            gap: 22px;
+            align-items: start;
+        }
+
+        .plot-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #ecfdf5;
+            color: #065f46;
+            border-radius: 999px;
+            padding: 4px 11px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .form-subtitle {
+            font-size: 0.95rem;
+            color: #1f2937;
+            margin: 18px 0 10px;
+            font-weight: 700;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+            gap: 12px;
+        }
+
+        .form-grid .span-all {
+            grid-column: 1 / -1;
+        }
+
+        .field label {
+            display: block;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        .field label .req {
+            color: #dc2626;
+        }
+
+        .field label .opt {
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        .field input,
+        .field select,
+        .field textarea {
+            width: 100%;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            padding: 9px 11px;
+            font-size: 0.93rem;
+            color: #0f172a;
+            background: #f8fafc;
+            font-family: inherit;
+        }
+
+        .field textarea {
+            resize: vertical;
+            min-height: 72px;
+        }
+
+        .field input:focus,
+        .field select:focus,
+        .field textarea:focus,
+        .controls-grid input:focus,
+        .controls-grid select:focus {
+            outline: 2px solid rgba(16, 185, 129, 0.35);
+            border-color: #10b981;
+            background: white;
+        }
+
+        .has-error input,
+        .has-error select,
+        .has-error textarea {
+            border-color: #dc2626 !important;
+            background: #fef2f2 !important;
+        }
+
+        .field-error {
+            color: #b91c1c;
+            font-size: 0.78rem;
+            margin-top: 4px;
+        }
+
+        .field-error:empty {
+            display: none;
+        }
+
+        .readonly-value {
+            padding: 9px 11px;
+            border-radius: 10px;
+            background: #ecfdf5;
+            color: #065f46;
+            font-weight: 700;
+            border: 1px dashed #6ee7b7;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .btn[disabled] {
+            opacity: 0.65;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .form-message {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .form-message:empty {
+            display: none;
+        }
+
+        .form-message.success {
+            background: #dcfce7;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+        }
+
+        .form-message.error {
+            background: #fee2e2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+        }
+
+        .form-message.info {
+            background: #e0f2fe;
+            border: 1px solid #bae6fd;
+            color: #075985;
+        }
+
+        .latest-status {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 14px;
+            background: #f8fafc;
+        }
+
+        .latest-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            color: #475569;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+
+        .status-tiles {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+        }
+
+        .status-tile {
+            background: white;
+            border-radius: 10px;
+            padding: 10px 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .tile-label {
+            color: #64748b;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .tile-value {
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 1.02rem;
+            margin-top: 2px;
+        }
+
+        .latest-notes {
+            margin: 10px 0 0;
+            color: #475569;
+            font-size: 0.88rem;
+            white-space: pre-wrap;
+        }
+
+        .empty-state {
+            color: #64748b;
+            font-size: 0.9rem;
+            text-align: center;
+            padding: 16px 8px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border-radius: 999px;
+            padding: 3px 10px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .badge-healthy,
+        .badge-low,
+        .badge-resolved {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-attention,
+        .badge-moderate,
+        .badge-monitoring,
+        .badge-estimate {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-critical,
+        .badge-severe {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge-open {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-neutral {
+            background: #f1f5f9;
+            color: #334155;
+        }
+
+        .segmented {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .segmented input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .segmented label {
+            margin: 0;
+            padding: 8px 16px;
+            border-radius: 999px;
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #334155;
+        }
+
+        .segmented input:checked + label.sev-low {
+            background: #dcfce7;
+            border-color: #22c55e;
+            color: #166534;
+        }
+
+        .segmented input:checked + label.sev-moderate {
+            background: #fef3c7;
+            border-color: #f59e0b;
+            color: #92400e;
+        }
+
+        .segmented input:checked + label.sev-severe {
+            background: #fee2e2;
+            border-color: #ef4444;
+            color: #991b1b;
+        }
+
+        .segmented input:focus-visible + label {
+            outline: 2px solid #10b981;
+            outline-offset: 2px;
+        }
+
+        .image-preview {
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #475569;
+            font-size: 0.85rem;
+        }
+
+        .image-preview img {
+            width: 72px;
+            height: 72px;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .recommendation-panel {
+            margin-top: 16px;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #10b981;
+            background: #f0fdf4;
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .recommendation-panel > h3 {
+            font-size: 1rem;
+            color: #14532d;
+            margin: 0 0 10px;
+        }
+
+        .rec-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .rec-summary {
+            color: #1f2937;
+            margin: 0 0 6px;
+        }
+
+        .rec-section h4 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #475569;
+            margin: 12px 0 6px;
+        }
+
+        .rec-section ol,
+        .rec-section ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #334155;
+            font-size: 0.9rem;
+        }
+
+        .rec-section li {
+            margin-bottom: 4px;
+        }
+
+        .rec-meta {
+            margin: 10px 0 0;
+            font-size: 0.85rem;
+            color: #475569;
+        }
+
+        .rec-disclaimer {
+            margin: 12px 0 0;
+            font-size: 0.78rem;
+            color: #64748b;
+            font-style: italic;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.87rem;
+            min-width: 680px;
+        }
+
+        .data-table th {
+            background: #f1f5f9;
+            color: #334155;
+            text-align: left;
+            font-weight: 700;
+            padding: 10px 12px;
+            white-space: nowrap;
+        }
+
+        .data-table td {
+            padding: 9px 12px;
+            border-top: 1px solid #e2e8f0;
+            color: #1f2937;
+            vertical-align: top;
+        }
+
+        .data-table .num {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .data-table tr.row-current td {
+            background: #ecfdf5;
+        }
+
+        .data-table tr.row-past td {
+            color: #64748b;
+        }
+
+        .measured-tag {
+            display: block;
+            font-size: 0.7rem;
+            color: #2563eb;
+            font-weight: 700;
+        }
+
+        .cell-sub {
+            color: #64748b;
+            font-size: 0.8rem;
+            margin-top: 2px;
+        }
+
+        .rec-cell {
+            max-width: 340px;
+            min-width: 220px;
+        }
+
+        .rec-cell .truncate {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .status-select {
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 6px 8px;
+            background: #f8fafc;
+            font-size: 0.85rem;
+            min-height: 34px;
+        }
+
+        .btn-small {
+            min-height: 34px;
+            padding: 6px 12px;
+            font-size: 0.82rem;
+        }
+
+        .status-history {
+            margin-top: 16px;
+        }
+
+        .status-history summary {
+            cursor: pointer;
+            font-weight: 700;
+            color: #1f7a63;
+            padding: 6px 0;
+        }
+
+        .status-history .table-wrap {
+            margin-top: 8px;
+        }
+
+        .history-filters {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .metric-toggle {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .metric-toggle button {
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            color: #334155;
+            border-radius: 999px;
+            padding: 7px 14px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            min-height: 38px;
+        }
+
+        .metric-toggle button[aria-pressed="true"] {
+            background: #1f7a63;
+            border-color: #1f7a63;
+            color: white;
+        }
+
+        .chart-holder {
+            position: relative;
+            height: 340px;
+        }
+
+        .chart-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+            text-align: center;
+            padding: 0 20px;
+        }
+
+        .legend-note {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            font-size: 0.8rem;
+            color: #475569;
+            margin: 10px 0;
+        }
+
+        .legend-note span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .swatch {
+            display: inline-block;
+            width: 22px;
+            height: 0;
+            border-top: 3px solid;
+        }
+
+        .swatch-actual {
+            border-color: #2563eb;
+        }
+
+        .swatch-predicted {
+            border-color: #10b981;
+            border-top-style: dashed;
+        }
+
+        .swatch-model {
+            border-color: #94a3b8;
+            border-top-style: dotted;
+        }
+
+        .swatch-band {
+            height: 10px;
+            border: none;
+            background: rgba(16, 185, 129, 0.22);
+            border-radius: 2px;
+        }
+
+        .swatch-today {
+            border-color: #f59e0b;
+            border-top-style: dashed;
+            width: 14px;
+            transform: rotate(90deg);
+        }
+
+        .prediction-meta {
+            color: #334155;
+            font-size: 0.88rem;
+            margin: 4px 0;
+        }
+
+        .prediction-notes {
+            margin: 8px 0 14px;
+            padding-left: 18px;
+            color: #475569;
+            font-size: 0.86rem;
+        }
+
+        .info-banner {
+            background: #fef3c7;
+            border: 1px solid #fde68a;
+            color: #92400e;
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+        }
+
+        .warning-list {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .warning-list .info-banner {
+            margin-bottom: 0;
+        }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            z-index: 2000;
+        }
+
+        .modal-card {
+            background: white;
+            border-radius: 14px;
+            max-width: 740px;
+            width: 100%;
+            max-height: 90vh;
+            overflow: auto;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 1;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.1rem;
+            color: #1f2937;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.3rem;
+            color: #64748b;
+            cursor: pointer;
+            min-width: 44px;
+            min-height: 44px;
+        }
+
+        .modal-body {
+            padding: 16px 20px 20px;
+        }
+
+        .modal-body h4 {
+            margin: 16px 0 6px;
+            color: #1f2937;
+            font-size: 0.95rem;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+        }
+
+        .detail-text {
+            color: #334155;
+            white-space: pre-wrap;
+            margin: 0;
+        }
+
+        .detail-image {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            display: block;
+        }
+
+        .modal-status-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 14px;
+            padding: 12px;
+            background: #f8fafc;
+            border-radius: 10px;
+        }
+
+        .status-timeline {
+            margin: 0;
+            padding-left: 18px;
+            color: #475569;
+            font-size: 0.85rem;
+        }
+
         @media (max-width: 768px) {
             .forecast-container {
                 padding: 14px 10px 28px;
@@ -149,7 +889,7 @@
             .forecast-controls,
             .summary-card,
             .chart-card,
-            .notes-box {
+            .panel-card {
                 padding: 14px;
             }
 
@@ -161,13 +901,22 @@
                 flex-direction: column;
             }
 
-            .actions-row .btn {
+            .actions-row .btn,
+            .form-actions .btn {
                 width: 100%;
                 justify-content: center;
             }
 
             .summary-value {
                 font-size: 1.15rem;
+            }
+
+            .chart-holder {
+                height: 280px;
+            }
+
+            .monitor-grid {
+                gap: 0;
             }
         }
     </style>
@@ -183,19 +932,12 @@
                 <i class="fas fa-leaf"></i>
                 <span data-i18n="brand">AgriPinya</span>
             </a>
-            <div class="language-selector">
-                <select id="languageSelect" onchange="changeLanguage()">
-                    <option value="en">English</option>
-                    <option value="tl">Tagalog</option>
-                    <option value="es">Español</option>
-                </select>
-            </div>
         </div>
         <ul class="sidebar-menu">
             <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
             <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
             <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
-            <li><a href="/sensors/water-pump"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <li><a href="/sensors/water-pump"><i class="fas fa-faucet"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
             <div class="sidebar-section">Agriculture</div>
             <li><a href="/forecast" class="active"><i class="fas fa-chart-line"></i> Forecast</a></li>
             <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
@@ -213,8 +955,26 @@
         </header>
 
         <div class="forecast-container">
-            <div class="forecast-controls">
+            <div id="storageBanner" class="info-banner" role="status" hidden></div>
+
+            <!-- Forecast configuration -->
+            <section class="forecast-controls" aria-labelledby="configTitle">
+                <div class="card-heading">
+                    <h2 id="configTitle"><i class="fas fa-sliders-h"></i> Forecast Configuration</h2>
+                    <span class="card-hint" id="plotHint"></span>
+                </div>
                 <div class="controls-grid">
+                    <div>
+                        <label for="plantCode">Plant / Plot ID</label>
+                        <input type="text" id="plantCode" list="plantCodeList" maxlength="40" placeholder="e.g. PLOT-A1" autocomplete="off">
+                        <datalist id="plantCodeList"></datalist>
+                    </div>
+                    <div id="savedPlotsField" hidden>
+                        <label for="savedPlots">Saved Plots</label>
+                        <select id="savedPlots">
+                            <option value="">-- Select a saved plot --</option>
+                        </select>
+                    </div>
                     <div>
                         <label for="plantingDate">Planting Date</label>
                         <input type="date" id="plantingDate">
@@ -241,16 +1001,206 @@
                     </div>
                 </div>
                 <div class="actions-row">
-                    <button class="btn btn-primary" onclick="loadForecast()">
+                    <button class="btn btn-primary" onclick="runForecast()">
                         <i class="fas fa-bolt"></i> Run Forecast
                     </button>
                     <button class="btn btn-outline" onclick="applyProfileDefaults()">
                         <i class="fas fa-sliders-h"></i> Apply Profile Defaults
                     </button>
                 </div>
+                <p class="card-hint" style="margin: 10px 0 0;">The plot's planting date, profile and cycle days are saved with each status or problem record.</p>
                 <div id="errorBox" class="error-box"></div>
+            </section>
+
+            <div class="monitor-grid">
+                <!-- Current pineapple status -->
+                <section class="panel-card" aria-labelledby="statusTitle">
+                    <div class="card-heading">
+                        <h2 id="statusTitle"><i class="fas fa-seedling"></i> Current Pineapple Status</h2>
+                        <span class="plot-chip"><i class="fas fa-map-marker-alt"></i> Plot: <span class="active-plot-name">--</span></span>
+                    </div>
+
+                    <div id="latestStatus" class="latest-status" aria-live="polite">
+                        <div class="empty-state">Loading current status...</div>
+                    </div>
+
+                    <form id="statusForm" novalidate>
+                        <div class="form-subtitle">Record the latest condition</div>
+                        <div class="form-grid">
+                            <div class="field">
+                                <label for="statusLoggedAt">Date / Time <span class="req">*</span></label>
+                                <input type="datetime-local" id="statusLoggedAt" required>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label>Days After Planting</label>
+                                <div class="readonly-value" id="statusDap" aria-live="polite">--</div>
+                            </div>
+                            <div class="field">
+                                <label for="statusStage">Current Growth Stage <span class="req">*</span></label>
+                                <select id="statusStage" required>
+                                    <option value="">Select growth stage</option>
+                                    {% for stage in monitoring.growth_stages %}
+                                    <option value="{{ stage }}">{{ stage }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusCondition">Plant Condition <span class="req">*</span></label>
+                                <select id="statusCondition" required>
+                                    <option value="">Select condition</option>
+                                    {% for condition in monitoring.plant_conditions %}
+                                    <option value="{{ condition }}">{{ condition }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusHeight">Plant Height (cm)</label>
+                                <input type="number" id="statusHeight" min="0" max="300" step="0.1" inputmode="decimal">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusLeafLength">Leaf Length (cm) <span class="opt">if applicable</span></label>
+                                <input type="number" id="statusLeafLength" min="0" max="200" step="0.1" inputmode="decimal">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusLeafCount">Number of Leaves <span class="opt">if applicable</span></label>
+                                <input type="number" id="statusLeafCount" min="0" max="300" step="1" inputmode="numeric">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusSoil">Soil Moisture (%)</label>
+                                <input type="number" id="statusSoil" min="0" max="100" step="0.1" inputmode="decimal">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusFruitDiameter">Fruit Diameter (cm)</label>
+                                <input type="number" id="statusFruitDiameter" min="0" max="40" step="0.1" inputmode="decimal">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusFruitLength">Fruit Length (cm)</label>
+                                <input type="number" id="statusFruitLength" min="0" max="60" step="0.1" inputmode="decimal">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="statusWeight">Estimated Fruit Weight (kg)</label>
+                                <input type="number" id="statusWeight" min="0" max="10" step="0.01" inputmode="decimal">
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field-error span-all" id="statusMeasurementsError"></div>
+                            <div class="field span-all">
+                                <label for="statusNotes">Additional Notes <span class="opt">optional</span></label>
+                                <textarea id="statusNotes" maxlength="1000" placeholder="e.g. new leaves emerging, applied fertilizer last week"></textarea>
+                                <div class="field-error"></div>
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="saveStatusBtn">
+                                <i class="fas fa-save"></i> Save Current Status
+                            </button>
+                            <span class="card-hint">At least one measurement is required. Earlier records are kept as history.</span>
+                        </div>
+                        <div class="form-message" id="statusMessage" role="status" aria-live="polite"></div>
+                    </form>
+
+                    <details class="status-history">
+                        <summary>Status history (<span id="statusCount">0</span> records)</summary>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date / Time</th>
+                                        <th class="num">DAP</th>
+                                        <th>Growth Stage</th>
+                                        <th class="num">Height (cm)</th>
+                                        <th class="num">Leaves</th>
+                                        <th class="num">Fruit D × L (cm)</th>
+                                        <th class="num">Weight (kg)</th>
+                                        <th class="num">Soil (%)</th>
+                                        <th>Condition</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="statusHistoryBody"></tbody>
+                            </table>
+                        </div>
+                    </details>
+                </section>
+
+                <!-- Plant problem logging -->
+                <section class="panel-card" aria-labelledby="problemTitle">
+                    <div class="card-heading">
+                        <h2 id="problemTitle"><i class="fas fa-bug"></i> Log Plant Problem</h2>
+                        <span class="plot-chip"><i class="fas fa-map-marker-alt"></i> Plot: <span class="active-plot-name">--</span></span>
+                    </div>
+                    <p class="card-hint" style="margin-top: -6px;">Report a problem you observed. The system saves it and generates a recommendation from the disease detection model and knowledge base.</p>
+
+                    <form id="problemForm" novalidate>
+                        <div class="form-grid">
+                            <div class="field">
+                                <label for="problemLoggedAt">Date / Time <span class="req">*</span></label>
+                                <input type="datetime-local" id="problemLoggedAt" required>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field">
+                                <label for="problemType">Problem Type <span class="req">*</span></label>
+                                <select id="problemType" required>
+                                    <option value="">Select problem type</option>
+                                    {% for problem_type in monitoring.problem_types %}
+                                    <option value="{{ problem_type }}">{{ problem_type }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field span-all">
+                                <label id="severityLabel">Severity <span class="req">*</span></label>
+                                <div class="segmented" id="severityGroup" role="radiogroup" aria-labelledby="severityLabel">
+                                    {% for level in monitoring.severities %}
+                                    <input type="radio" name="severity" id="severity{{ level }}" value="{{ level }}" {% if level == 'Moderate' %}checked{% endif %}>
+                                    <label for="severity{{ level }}" class="sev-{{ level|lower }}">{{ level }}</label>
+                                    {% endfor %}
+                                </div>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field span-all">
+                                <label for="problemDescription">Description / Observation <span class="req">*</span></label>
+                                <textarea id="problemDescription" maxlength="2000" required placeholder="e.g. Brown spots appearing on the lower leaves"></textarea>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field span-all">
+                                <label for="problemImage">Photo <span class="opt">optional, PNG/JPG up to 10 MB</span></label>
+                                <input type="file" id="problemImage" accept="image/png,image/jpeg">
+                                <div class="image-preview" id="problemImagePreview" hidden>
+                                    <img alt="Selected problem photo preview">
+                                    <span>A photo lets the image detection model check the plant.</span>
+                                </div>
+                                <div class="field-error"></div>
+                            </div>
+                            <div class="field span-all">
+                                <label for="problemNotes">Additional Notes <span class="opt">optional</span></label>
+                                <textarea id="problemNotes" maxlength="1000" placeholder="e.g. first noticed 3 days ago, 5 plants affected"></textarea>
+                                <div class="field-error"></div>
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="logProblemBtn">
+                                <i class="fas fa-stethoscope"></i> Log Problem &amp; Get Recommendation
+                            </button>
+                        </div>
+                        <div class="form-message" id="problemMessage" role="status" aria-live="polite"></div>
+                    </form>
+
+                    <div class="recommendation-panel" id="recommendationResult" aria-live="polite" hidden></div>
+                </section>
             </div>
 
+            <!-- Forecast summary -->
+            <h2 class="section-title"><i class="fas fa-calendar-check"></i> Forecast Summary</h2>
+            <div class="warning-list" id="forecastWarnings" role="status"></div>
             <div class="summary-grid">
                 <div class="summary-card stage-highlight">
                     <div class="summary-label" style="color: rgba(255, 255, 255, 0.86);">Predicted Growth Stage</div>
@@ -278,23 +1228,110 @@
                 </div>
             </div>
 
+            <!-- Monthly growth & size prediction -->
+            <section class="panel-card" aria-labelledby="predictionTitle">
+                <div class="card-heading">
+                    <h2 id="predictionTitle"><i class="fas fa-ruler-vertical"></i> Monthly Pineapple Growth &amp; Size Prediction</h2>
+                    <span class="badge badge-estimate"><i class="fas fa-info-circle"></i> Estimates</span>
+                </div>
+                <div class="info-banner" id="predictionMessage" role="status" hidden></div>
+
+                <div class="metric-toggle" role="group" aria-label="Chart metric">
+                    <button type="button" data-metric="height_cm" aria-pressed="true">Plant Height</button>
+                    <button type="button" data-metric="fruit_diameter_cm" aria-pressed="false">Fruit Diameter</button>
+                    <button type="button" data-metric="fruit_length_cm" aria-pressed="false">Fruit Length</button>
+                    <button type="button" data-metric="weight_kg" aria-pressed="false">Estimated Fruit Weight</button>
+                </div>
+                <div class="chart-holder">
+                    <canvas id="growthChart" aria-label="Actual versus predicted pineapple growth chart" role="img"></canvas>
+                    <div class="chart-empty" id="growthChartEmpty" hidden></div>
+                </div>
+                <div class="legend-note">
+                    <span><i class="swatch swatch-actual"></i> Actual (measured)</span>
+                    <span><i class="swatch swatch-predicted"></i> Predicted</span>
+                    <span><i class="swatch swatch-band"></i> Confidence range</span>
+                    <span><i class="swatch swatch-model"></i> Model estimate for past months</span>
+                    <span><i class="swatch swatch-today"></i> Today</span>
+                </div>
+                <p class="prediction-meta" id="predictionMeta"></p>
+                <ul class="prediction-notes" id="predictionNotes"></ul>
+
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Month</th>
+                                <th class="num">Days After Planting</th>
+                                <th>Date</th>
+                                <th>Predicted Growth Stage</th>
+                                <th class="num">Plant Height (cm)</th>
+                                <th class="num">Fruit Diameter (cm)</th>
+                                <th class="num">Fruit Length (cm)</th>
+                                <th class="num">Est. Weight (kg)</th>
+                                <th class="num">Confidence</th>
+                                <th>Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="predictionTableBody">
+                            <tr><td colspan="10"><div class="empty-state">Loading predictions...</div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <div class="charts-grid">
                 <div class="chart-card">
                     <h3><i class="fas fa-leaf"></i> Forecasted Environment Trends</h3>
                     <canvas id="envChart"></canvas>
                 </div>
                 <div class="chart-card">
-                    <h3><i class="fas fa-seedling"></i> Daily Growth Score Forecast</h3>
+                    <h3><i class="fas fa-seedling"></i> Daily Growth Score Estimate</h3>
                     <canvas id="scoreChart"></canvas>
                 </div>
             </div>
 
-            <div class="notes-box">
-                <h3><i class="fas fa-notes-medical"></i> Model Notes</h3>
-                <ul id="notesList">
-                    <li>Run forecast to view model notes.</li>
-                </ul>
+            <!-- Problem & recommendation history -->
+            <section class="panel-card" aria-labelledby="historyTitle">
+                <div class="card-heading">
+                    <h2 id="historyTitle"><i class="fas fa-history"></i> Problem &amp; Recommendation History</h2>
+                    <div class="history-filters">
+                        <label for="historyFilter" class="card-hint">Show</label>
+                        <select id="historyFilter" class="status-select">
+                            <option value="all">All plots</option>
+                            <option value="plot">This plot only</option>
+                        </select>
+                        <span class="card-hint"><span id="problemCount">0</span> records</span>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Plant/Plot</th>
+                                <th>Problem</th>
+                                <th>Severity</th>
+                                <th>Recommendation</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="problemHistoryBody">
+                            <tr><td colspan="7"><div class="empty-state">Loading problem history...</div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="problemModal" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="problemModalTitle">
+            <div class="modal-header">
+                <h3 id="problemModalTitle">Problem details</h3>
+                <button type="button" class="modal-close" id="problemModalClose" aria-label="Close details"><i class="fas fa-times"></i></button>
             </div>
+            <div class="modal-body" id="problemModalBody"></div>
         </div>
     </div>
 
@@ -302,12 +1339,87 @@
     <script>
         let envChart;
         let scoreChart;
+        let growthChart;
 
         const profileDefaults = {
             standard: { cycleDays: 540 },
             smooth_cayenne: { cycleDays: 560 },
             md2: { cycleDays: 500 }
         };
+
+        const PROBLEM_STATUSES = {{ monitoring.problem_statuses|tojson }};
+        const PLOT_STORAGE_KEY = 'pinasense.forecast.plot';
+
+        const METRICS = {
+            height_cm: { label: 'Plant Height', unit: 'cm', digits: 1 },
+            fruit_diameter_cm: { label: 'Fruit Diameter', unit: 'cm', digits: 1 },
+            fruit_length_cm: { label: 'Fruit Length', unit: 'cm', digits: 1 },
+            weight_kg: { label: 'Estimated Fruit Weight', unit: 'kg', digits: 2 }
+        };
+
+        const MEASUREMENT_LABELS = {
+            height_cm: 'Plant height',
+            leaf_length_cm: 'Leaf length',
+            leaf_count: 'Number of leaves',
+            fruit_diameter_cm: 'Fruit diameter',
+            fruit_length_cm: 'Fruit length',
+            estimated_weight_kg: 'Estimated fruit weight',
+            soil_moisture: 'Soil moisture'
+        };
+
+        const PLANT_FIELD_INPUTS = {
+            plant_code: 'plantCode',
+            planting_date: 'plantingDate',
+            profile: 'profile',
+            cycle_days: 'cycleDays'
+        };
+
+        const STATUS_FIELD_INPUTS = {
+            logged_at: 'statusLoggedAt',
+            growth_stage: 'statusStage',
+            plant_condition: 'statusCondition',
+            height_cm: 'statusHeight',
+            leaf_length_cm: 'statusLeafLength',
+            leaf_count: 'statusLeafCount',
+            fruit_diameter_cm: 'statusFruitDiameter',
+            fruit_length_cm: 'statusFruitLength',
+            estimated_weight_kg: 'statusWeight',
+            soil_moisture: 'statusSoil',
+            notes: 'statusNotes',
+            measurements: 'statusMeasurementsError'
+        };
+
+        const PROBLEM_FIELD_INPUTS = {
+            logged_at: 'problemLoggedAt',
+            problem_type: 'problemType',
+            severity: 'severityGroup',
+            description: 'problemDescription',
+            notes: 'problemNotes',
+            image: 'problemImage'
+        };
+
+        const BADGE_CLASSES = {
+            'Healthy': 'badge-healthy',
+            'Needs Attention': 'badge-attention',
+            'Critical': 'badge-critical',
+            'Low': 'badge-low',
+            'Moderate': 'badge-moderate',
+            'Severe': 'badge-severe',
+            'Open': 'badge-open',
+            'Monitoring': 'badge-monitoring',
+            'Resolved': 'badge-resolved'
+        };
+
+        let knownPlants = [];
+        let latestStatus = null;
+        let loadedStatusPlotCode = null;
+        let statusStageTouched = false;
+        let predictionData = null;
+        let predictionPlotCode = null;
+        let predictionRequestId = 0;
+        let currentMetric = 'height_cm';
+        let problemRecords = [];
+        let activeProblemId = null;
 
         function ensureSidebarBackdrop() {
             const sidebar = document.getElementById('sidebar');
@@ -345,6 +1457,7 @@
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
                 setSidebarOpen(false);
+                closeProblemModal();
             }
         });
 
@@ -354,6 +1467,166 @@
                 setSidebarOpen(false);
             }
         });
+
+        // ---------- Helpers ----------
+
+        function escapeHtml(value) {
+            return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        function notify(message, type) {
+            if (typeof showNotification === 'function') showNotification(message, type);
+        }
+
+        function fieldValue(id) {
+            const el = document.getElementById(id);
+            return el ? el.value.trim() : '';
+        }
+
+        function localDateTimeValue(date = new Date()) {
+            const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+            return local.toISOString().slice(0, 16);
+        }
+
+        function parseDateValue(value) {
+            if (!value) return null;
+            const parsed = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+            return isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        function formatDateTime(value) {
+            const d = parseDateValue(value);
+            return d ? d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '--';
+        }
+
+        function formatDate(value) {
+            const d = parseDateValue(value);
+            return d ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '--';
+        }
+
+        function formatNumber(value, digits = 1, unit = '') {
+            if (value === null || value === undefined || value === '') return '--';
+            const n = Number(value);
+            if (!isFinite(n)) return '--';
+            return `${n.toFixed(digits)}${unit ? ' ' + unit : ''}`;
+        }
+
+        function truncateText(value, length) {
+            const text = String(value || '');
+            return text.length > length ? `${text.slice(0, length - 1)}…` : text;
+        }
+
+        function badge(text) {
+            return `<span class="badge ${BADGE_CLASSES[text] || 'badge-neutral'}">${escapeHtml(text || '--')}</span>`;
+        }
+
+        async function apiRequest(url, options = {}) {
+            const { timeoutMs = 25000, ...fetchOptions } = options;
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.success === false) {
+                    const error = new Error(data.message || data.error || `Request failed (${response.status}).`);
+                    error.errors = data.errors;
+                    throw error;
+                }
+                return data;
+            } catch (err) {
+                if (controller.signal.aborted) {
+                    throw new Error('Loading timed out. Please refresh to try again; your saved records have not been deleted.');
+                }
+                if (err instanceof TypeError) {
+                    throw new Error('Cannot reach the server. Check your connection and try again.');
+                }
+                throw err;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        function setBusy(button, busy, label) {
+            if (busy) {
+                button.dataset.originalHtml = button.innerHTML;
+                button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${escapeHtml(label)}`;
+                button.disabled = true;
+            } else {
+                if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+                button.disabled = false;
+            }
+        }
+
+        function setFormMessage(element, type, message) {
+            element.className = `form-message ${type || ''}`;
+            element.textContent = message || '';
+        }
+
+        function clearFieldErrors(root) {
+            if (!root) return;
+            root.querySelectorAll('.has-error').forEach((el) => el.classList.remove('has-error'));
+            root.querySelectorAll('.field-error').forEach((el) => { el.textContent = ''; });
+        }
+
+        function showFieldErrors(errors, inputMap) {
+            Object.entries(errors || {}).forEach(([field, message]) => {
+                const id = inputMap[field] || PLANT_FIELD_INPUTS[field];
+                const input = id ? document.getElementById(id) : null;
+                if (!input) return;
+                if (input.classList.contains('field-error')) {
+                    input.textContent = message;
+                    return;
+                }
+                const wrapper = input.closest('.field') || input.parentElement;
+                wrapper.classList.add('has-error');
+                let slot = wrapper.querySelector('.field-error');
+                if (!slot) {
+                    slot = document.createElement('div');
+                    slot.className = 'field-error';
+                    wrapper.appendChild(slot);
+                }
+                slot.textContent = message;
+            });
+        }
+
+        function plotSettings() {
+            return {
+                plant_code: fieldValue('plantCode'),
+                planting_date: fieldValue('plantingDate'),
+                profile: fieldValue('profile'),
+                cycle_days: fieldValue('cycleDays'),
+                horizon_days: fieldValue('horizonDays'),
+                history_days: fieldValue('historyDays')
+            };
+        }
+
+        function validateLoggedAt(value, plantingDate, label, errors) {
+            if (!value) {
+                errors.logged_at = `${label} is required.`;
+                return;
+            }
+            const logged = parseDateValue(value);
+            if (!logged) {
+                errors.logged_at = `${label} is not a valid date/time.`;
+            } else if (logged.getTime() > Date.now() + 10 * 60000) {
+                errors.logged_at = `${label} cannot be in the future.`;
+            } else if (plantingDate && logged < parseDateValue(plantingDate)) {
+                errors.logged_at = `${label} cannot be before the planting date.`;
+            }
+        }
+
+        function validatePlotSettings(settings, errors) {
+            if (!settings.plant_code) errors.plant_code = 'Plant/Plot ID is required.';
+            if (!settings.planting_date) {
+                errors.planting_date = 'Planting date is required.';
+            } else if (parseDateValue(settings.planting_date) > new Date()) {
+                errors.planting_date = 'Planting date cannot be in the future.';
+            }
+        }
+
+        // ---------- Existing forecast ----------
 
         function setDefaultPlantingDate() {
             const dateInput = document.getElementById('plantingDate');
@@ -378,18 +1651,26 @@
             document.getElementById('historyUsedValue').textContent = historyDaysUsed;
         }
 
-        function renderNotes(notes) {
-            const notesList = document.getElementById('notesList');
-            notesList.innerHTML = (notes || []).map(n => `<li>${n}</li>`).join('') || '<li>No notes available.</li>';
+        function renderForecastContext(data) {
+            const warnings = data.warnings || [];
+            document.getElementById('forecastWarnings').innerHTML = warnings
+                .map(w => `<div class="info-banner"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(w)}</div>`)
+                .join('');
+
+            const s = data.summary || {};
+
+            if (!statusStageTouched && !latestStatus && s.predicted_growth_stage) {
+                document.getElementById('statusStage').value = s.predicted_growth_stage;
+            }
         }
 
-        function renderCharts(items) {
-            const labels = items.map(i => i.date);
-            const soil = items.map(i => i.soil_moisture_percent);
-            const temp = items.map(i => i.temperature_c);
-            const humid = items.map(i => i.humidity_percent);
-            const score = items.map(i => i.growth_score);
-
+        function renderCharts(items, simulation, scoreScenario) {
+            const soilItems = simulation?.daily || [];
+            const soil = soilItems.map(i => i.soil_moisture_percent);
+            const modeled = Array.isArray(scoreScenario?.daily) && scoreScenario.daily.length > 0;
+            const scoreItems = modeled ? scoreScenario.daily : items;
+            const labels = scoreItems.map(i => i.date);
+            const score = scoreItems.map(i => i.growth_score);
             if (envChart) envChart.destroy();
             if (scoreChart) scoreChart.destroy();
 
@@ -399,35 +1680,43 @@
             envChart = new Chart(envCtx, {
                 type: 'line',
                 data: {
-                    labels,
+                    labels: soilItems.map(i => i.date),
                     datasets: [
                         {
-                            label: 'Soil Moisture %',
+                            label: 'Simulated Soil Moisture Proxy (%)',
                             data: soil,
                             borderColor: '#0ea5e9',
                             backgroundColor: 'rgba(14, 165, 233, 0.1)',
-                            tension: 0.25
-                        },
-                        {
-                            label: 'Temperature C',
-                            data: temp,
-                            borderColor: '#ef4444',
-                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                            tension: 0.25
-                        },
-                        {
-                            label: 'Humidity %',
-                            data: humid,
-                            borderColor: '#16a34a',
-                            backgroundColor: 'rgba(22, 163, 74, 0.1)',
-                            tension: 0.25
+                            fill: true,
+                            pointRadius: 2,
+                            pointHoverRadius: 5,
+                            tension: 0.2,
+                            cubicInterpolationMode: 'monotone'
                         }
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: true,
-                    aspectRatio: 2.2
+                    aspectRatio: 2.2,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: context => soilItems[context.dataIndex]?.event || ''
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            min: 0,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'Soil Moisture Proxy (%)'
+                            }
+                        }
+                    }
                 }
             });
 
@@ -437,7 +1726,7 @@
                     labels,
                     datasets: [
                         {
-                            label: 'Growth Score',
+                            label: modeled ? 'Modeled Growth Score (0–100)' : 'Sensor Trend Score (0–100)',
                             data: score,
                             backgroundColor: 'rgba(31, 122, 99, 0.7)',
                             borderColor: '#1f7a63',
@@ -449,10 +1738,32 @@
                     responsive: true,
                     maintainAspectRatio: true,
                     aspectRatio: 2.2,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: context => {
+                                    const day = scoreItems[context.dataIndex];
+                                    const details = ['Environmental suitability estimate; not measured growth.'];
+                                    if (day?.soil_moisture_percent != null) {
+                                        details.push(`Soil proxy: ${day.soil_moisture_percent.toFixed(1)}%`);
+                                    }
+                                    if (day?.temperature_c != null) {
+                                        details.push(`Temperature trend: ${day.temperature_c.toFixed(1)} °C`);
+                                    }
+                                    if (day?.humidity_percent != null) {
+                                        details.push(`Humidity trend: ${day.humidity_percent.toFixed(1)}%`);
+                                    }
+                                    if (modeled && day?.event) details.push(day.event);
+                                    return details;
+                                }
+                            }
+                        }
+                    },
                     scales: {
                         y: {
                             beginAtZero: true,
-                            max: 100
+                            max: 100,
+                            title: { display: true, text: 'Estimated suitability (0–100)' }
                         }
                     }
                 }
@@ -468,6 +1779,7 @@
             const historyDays = document.getElementById('historyDays').value;
             const profile = document.getElementById('profile').value;
             const cycleDays = document.getElementById('cycleDays').value;
+            const plantCode = document.getElementById('plantCode').value.trim();
 
             const params = new URLSearchParams({
                 planting_date: plantingDate,
@@ -477,28 +1789,952 @@
             });
 
             if (cycleDays) params.set('cycle_days', cycleDays);
+            if (plantCode) params.set('plant_code', plantCode);
 
             try {
-                const response = await fetch(`/api/forecast/growth-harvest?${params.toString()}`);
-                const data = await response.json();
-
-                if (!response.ok || data.error) {
-                    throw new Error(data.error || 'Unable to load forecast');
-                }
+                const data = await apiRequest(`/api/forecast/growth-harvest?${params.toString()}`, { cache: 'no-store' });
 
                 renderSummary(data.summary, data.history_days_used);
-                renderNotes(data.notes);
-                renderCharts(data.future_environment_forecast || []);
+                renderCharts(data.future_environment_forecast || [], data.soil_moisture_simulation, data.growth_score_scenario);
+                renderForecastContext(data);
             } catch (err) {
                 errorBox.style.display = 'block';
                 errorBox.textContent = err.message;
             }
         }
 
-        window.addEventListener('load', () => {
+        function runForecast() {
+            return Promise.all([loadForecast(), loadPredictions(true)]);
+        }
+
+        function refreshAll() {
+            return Promise.all([loadForecast(), loadCurrentStatus(), loadPredictions(), loadProblems()]);
+        }
+
+        // ---------- Plots ----------
+
+        function findPlant(code) {
+            const key = String(code || '').trim().toLowerCase();
+            if (!key) return null;
+            return knownPlants.find(p => String(p.plant_code || '').toLowerCase() === key) || null;
+        }
+
+        function rememberPlot(code) {
+            try {
+                localStorage.setItem(PLOT_STORAGE_KEY, code);
+            } catch (e) {
+                // Storage can be blocked; the plot is simply not remembered.
+            }
+        }
+
+        function storedPlot() {
+            try {
+                return localStorage.getItem(PLOT_STORAGE_KEY);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function showStorageBanner(message) {
+            const banner = document.getElementById('storageBanner');
+            banner.textContent = message || '';
+            banner.hidden = !message;
+        }
+
+        async function loadPlants() {
+            try {
+                const data = await apiRequest('/api/forecast/plants');
+                knownPlants = data.plants || [];
+                showStorageBanner(data.storage && data.storage.message);
+            } catch (err) {
+                showStorageBanner(`Saved plots could not be loaded: ${err.message}`);
+            }
+            document.getElementById('plantCodeList').innerHTML = knownPlants
+                .map(p => `<option value="${escapeHtml(p.plant_code)}">${escapeHtml(p.variety || '')} · planted ${escapeHtml(p.planting_date || '')}</option>`)
+                .join('');
+            renderSavedPlotOptions();
+        }
+
+        function renderSavedPlotOptions() {
+            const field = document.getElementById('savedPlotsField');
+            const select = document.getElementById('savedPlots');
+            if (!field || !select) return;
+            field.hidden = knownPlants.length === 0;
+            const current = fieldValue('plantCode').toLowerCase();
+            select.innerHTML = ['<option value="">-- Select a saved plot --</option>'].concat(
+                knownPlants.map((p) => {
+                    const selected = String(p.plant_code).toLowerCase() === current ? ' selected' : '';
+                    const label = `${p.plant_code} · ${p.variety || p.farm_profile || ''} · planted ${formatDate(p.planting_date)}`;
+                    return `<option value="${escapeHtml(p.plant_code)}"${selected}>${escapeHtml(label)}</option>`;
+                })
+            ).join('');
+        }
+
+        function applyPlantSettings(plant) {
+            document.getElementById('plantCode').value = plant.plant_code;
+            if (plant.planting_date) document.getElementById('plantingDate').value = plant.planting_date;
+            if (profileDefaults[plant.farm_profile]) document.getElementById('profile').value = plant.farm_profile;
+            document.getElementById('cycleDays').value = plant.cycle_days || profileDefaults[document.getElementById('profile').value].cycleDays;
+        }
+
+        function updatePlotHint() {
+            const code = fieldValue('plantCode');
+            const plant = findPlant(code);
+            const hint = document.getElementById('plotHint');
+            if (!code) {
+                hint.textContent = 'Enter a Plant/Plot ID to save and load records.';
+            } else if (plant) {
+                hint.textContent = `Saved plot · ${plant.variety || plant.farm_profile} · planted ${formatDate(plant.planting_date)}`;
+            } else {
+                hint.textContent = 'New plot: it is created when you save its first status or problem record.';
+            }
+            document.querySelectorAll('.active-plot-name').forEach((el) => { el.textContent = code || '--'; });
+            const select = document.getElementById('savedPlots');
+            if (select) select.value = plant ? plant.plant_code : '';
+        }
+
+        async function onPlotChanged() {
+            const plant = findPlant(fieldValue('plantCode'));
+            if (plant) applyPlantSettings(plant);
+            rememberPlot(fieldValue('plantCode'));
+            latestStatus = null;
+            statusStageTouched = false;
+            updatePlotHint();
+            updateDaysAfterPlanting();
+            await refreshAll();
+        }
+
+        // ---------- Current status ----------
+
+        function updateDaysAfterPlanting() {
+            const output = document.getElementById('statusDap');
+            const planting = parseDateValue(fieldValue('plantingDate'));
+            const logged = parseDateValue(fieldValue('statusLoggedAt'));
+            if (!planting || !logged) {
+                output.textContent = '--';
+                return;
+            }
+            const loggedDay = new Date(logged.getFullYear(), logged.getMonth(), logged.getDate());
+            const days = Math.round((loggedDay - planting) / 86400000);
+            output.textContent = days < 0 ? 'Before planting date' : `${days} days`;
+        }
+
+        function statusTile(label, value) {
+            return `<div class="status-tile"><div class="tile-label">${escapeHtml(label)}</div><div class="tile-value">${value}</div></div>`;
+        }
+
+        function fruitSizeText(record) {
+            const d = record.fruit_diameter_cm;
+            const l = record.fruit_length_cm;
+            if (d != null && l != null) return `${formatNumber(d)} × ${formatNumber(l)} cm`;
+            if (d != null) return `${formatNumber(d)} cm diameter`;
+            if (l != null) return `${formatNumber(l)} cm length`;
+            return '--';
+        }
+
+        function renderLatestStatus(latest, total) {
+            const container = document.getElementById('latestStatus');
+            if (!latest) {
+                container.innerHTML = `<div class="empty-state"><i class="fas fa-seedling"></i> No status saved yet for this plot. Use the form below to record its current condition.</div>`;
+                return;
+            }
+            const leaves = [
+                latest.leaf_count != null ? `${latest.leaf_count} leaves` : null,
+                latest.leaf_length_cm != null ? `${formatNumber(latest.leaf_length_cm)} cm long` : null
+            ].filter(Boolean).join(', ') || '--';
+
+            container.innerHTML = `
+                <div class="latest-meta">
+                    <span><i class="far fa-clock"></i> ${escapeHtml(formatDateTime(latest.logged_at))} · ${escapeHtml(latest.days_after_planting)} days after planting</span>
+                    ${badge(latest.plant_condition)}
+                </div>
+                <div class="status-tiles">
+                    ${statusTile('Growth Stage', escapeHtml(latest.growth_stage))}
+                    ${statusTile('Plant Height', escapeHtml(formatNumber(latest.height_cm, 1, 'cm')))}
+                    ${statusTile('Fruit Size', escapeHtml(fruitSizeText(latest)))}
+                    ${statusTile('Est. Fruit Weight', escapeHtml(formatNumber(latest.estimated_weight_kg, 2, 'kg')))}
+                    ${statusTile('Soil Moisture', escapeHtml(formatNumber(latest.soil_moisture, 0, '%')))}
+                    ${statusTile('Leaves', escapeHtml(leaves))}
+                </div>
+                ${latest.notes ? `<p class="latest-notes"><strong>Notes:</strong> ${escapeHtml(latest.notes)}</p>` : ''}
+                <p class="card-hint" style="margin: 10px 0 0;">${escapeHtml(total)} status record(s) saved for this plot. The newest observation is shown as the current status.</p>
+            `;
+        }
+
+        function renderStatusHistory(history, total) {
+            document.getElementById('statusCount').textContent = total || 0;
+            const body = document.getElementById('statusHistoryBody');
+            if (!history || !history.length) {
+                body.innerHTML = '<tr><td colspan="10"><div class="empty-state">No status records yet.</div></td></tr>';
+                return;
+            }
+            body.innerHTML = history.map(r => `
+                <tr>
+                    <td>${escapeHtml(formatDateTime(r.logged_at))}</td>
+                    <td class="num">${escapeHtml(r.days_after_planting)}</td>
+                    <td>${escapeHtml(r.growth_stage)}</td>
+                    <td class="num">${escapeHtml(formatNumber(r.height_cm))}</td>
+                    <td class="num">${escapeHtml(r.leaf_count != null ? r.leaf_count : '--')}</td>
+                    <td class="num">${escapeHtml(r.fruit_diameter_cm != null || r.fruit_length_cm != null ? `${formatNumber(r.fruit_diameter_cm)} × ${formatNumber(r.fruit_length_cm)}` : '--')}</td>
+                    <td class="num">${escapeHtml(formatNumber(r.estimated_weight_kg, 2))}</td>
+                    <td class="num">${escapeHtml(formatNumber(r.soil_moisture, 0))}</td>
+                    <td>${badge(r.plant_condition)}</td>
+                    <td>${escapeHtml(truncateText(r.notes, 60))}</td>
+                </tr>`).join('');
+        }
+
+        async function loadCurrentStatus() {
+            const code = fieldValue('plantCode');
+            const container = document.getElementById('latestStatus');
+            if (!code) {
+                latestStatus = null;
+                loadedStatusPlotCode = null;
+                container.innerHTML = '<div class="empty-state">Enter a Plant/Plot ID in Forecast Configuration.</div>';
+                renderStatusHistory([], 0);
+                return;
+            }
+            try {
+                const data = await apiRequest(`/api/forecast/status?plant_code=${encodeURIComponent(code)}`);
+                if (code !== fieldValue('plantCode')) return;
+                latestStatus = data.latest;
+                renderLatestStatus(data.latest, data.total);
+                renderStatusHistory(data.history, data.total);
+                loadedStatusPlotCode = code;
+                if (data.latest && !statusStageTouched) {
+                    document.getElementById('statusStage').value = data.latest.growth_stage;
+                    document.getElementById('statusCondition').value = data.latest.plant_condition;
+                }
+            } catch (err) {
+                if (code !== fieldValue('plantCode')) return;
+                if (loadedStatusPlotCode === code) {
+                    showStorageBanner(`Could not refresh saved records: ${err.message}`);
+                    return;
+                }
+                container.innerHTML = `<div class="form-message error">${escapeHtml(err.message)}</div>`;
+                document.getElementById('statusHistoryBody').innerHTML =
+                    `<tr><td colspan="10"><div class="empty-state">Saved records could not be loaded. ${escapeHtml(err.message)}</div></td></tr>`;
+                document.getElementById('statusCount').textContent = '--';
+            }
+        }
+
+        function validateStatusForm(payload) {
+            const errors = {};
+            validatePlotSettings(payload, errors);
+            validateLoggedAt(payload.logged_at, payload.planting_date, 'Status date/time', errors);
+            if (!payload.growth_stage) errors.growth_stage = 'Current growth stage is required.';
+            if (!payload.plant_condition) errors.plant_condition = 'Plant condition is required.';
+
+            let hasMeasurement = false;
+            Object.entries(MEASUREMENT_LABELS).forEach(([field, label]) => {
+                const raw = payload[field];
+                if (raw === '' || raw === null || raw === undefined) return;
+                hasMeasurement = true;
+                const value = Number(raw);
+                if (!isFinite(value)) {
+                    errors[field] = `${label} must be a number.`;
+                } else if (field === 'soil_moisture' && (value < 0 || value > 100)) {
+                    errors[field] = 'Soil moisture must be between 0 and 100%.';
+                } else if (value < 0) {
+                    errors[field] = `${label} cannot be negative.`;
+                } else if (field === 'leaf_count' && !Number.isInteger(value)) {
+                    errors[field] = 'Number of leaves must be a whole number.';
+                }
+            });
+            if (!hasMeasurement) {
+                errors.measurements = 'Enter at least one measurement (for example plant height or soil moisture).';
+            }
+            return errors;
+        }
+
+        function resetStatusMeasurements() {
+            ['statusHeight', 'statusLeafLength', 'statusLeafCount', 'statusFruitDiameter', 'statusFruitLength', 'statusWeight', 'statusSoil', 'statusNotes']
+                .forEach((id) => { document.getElementById(id).value = ''; });
+            document.getElementById('statusLoggedAt').value = localDateTimeValue();
+            statusStageTouched = false;
+            updateDaysAfterPlanting();
+        }
+
+        async function saveCurrentStatus(event) {
+            event.preventDefault();
+            const form = document.getElementById('statusForm');
+            const messageEl = document.getElementById('statusMessage');
+            clearFieldErrors(form);
+            clearFieldErrors(document.querySelector('.forecast-controls'));
+            setFormMessage(messageEl);
+
+            const payload = {
+                ...plotSettings(),
+                logged_at: fieldValue('statusLoggedAt'),
+                growth_stage: fieldValue('statusStage'),
+                plant_condition: fieldValue('statusCondition'),
+                height_cm: fieldValue('statusHeight'),
+                leaf_length_cm: fieldValue('statusLeafLength'),
+                leaf_count: fieldValue('statusLeafCount'),
+                fruit_diameter_cm: fieldValue('statusFruitDiameter'),
+                fruit_length_cm: fieldValue('statusFruitLength'),
+                estimated_weight_kg: fieldValue('statusWeight'),
+                soil_moisture: fieldValue('statusSoil'),
+                notes: fieldValue('statusNotes')
+            };
+
+            const errors = validateStatusForm(payload);
+            if (Object.keys(errors).length) {
+                showFieldErrors(errors, STATUS_FIELD_INPUTS);
+                setFormMessage(messageEl, 'error', Object.values(errors)[0]);
+                return;
+            }
+
+            const button = document.getElementById('saveStatusBtn');
+            setBusy(button, true, 'Saving...');
+            try {
+                const data = await apiRequest('/api/forecast/status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                let message = data.message;
+                if (data.plant_created) message += ` New plot ${data.plant.plant_code} was created.`;
+                if (data.recalculation_warning) {
+                    setFormMessage(messageEl, 'info', `${message} ${data.recalculation_warning}`);
+                } else {
+                    setFormMessage(messageEl, 'success', `${message} The harvest forecast and monthly predictions were recalculated.`);
+                }
+                notify(data.message, 'success');
+                resetStatusMeasurements();
+                rememberPlot(data.plant.plant_code);
+                await loadPlants();
+                updatePlotHint();
+                await Promise.all([loadCurrentStatus(), loadForecast(), loadPredictions()]);
+            } catch (err) {
+                if (err.errors) showFieldErrors(err.errors, STATUS_FIELD_INPUTS);
+                setFormMessage(messageEl, 'error', err.message);
+                notify(err.message, 'error');
+            } finally {
+                setBusy(button, false);
+            }
+        }
+
+        // ---------- Problem logging ----------
+
+        function recommendationHtml(rec) {
+            if (!rec || !rec.summary) {
+                return '<p class="empty-state">No recommendation stored for this record.</p>';
+            }
+            const list = (items, ordered) => {
+                if (!items || !items.length) return '';
+                const tag = ordered ? 'ol' : 'ul';
+                return `<${tag}>${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</${tag}>`;
+            };
+            const icon = rec.source === 'image_detection' ? 'camera' : rec.source === 'symptom_match' ? 'book-medical' : 'clipboard-list';
+            const tags = [`<span class="badge badge-neutral"><i class="fas fa-${icon}"></i> ${escapeHtml(rec.source_label || rec.source)}</span>`];
+            if (rec.matched_condition) {
+                const confidence = rec.match_confidence != null ? ` (${Math.round(rec.match_confidence * 100)}%)` : '';
+                tags.push(`<span class="badge badge-attention">Possible cause: ${escapeHtml(rec.matched_condition)}${confidence}</span>`);
+            }
+            if (rec.urgency) tags.push(`<span class="badge badge-open">Priority: ${escapeHtml(rec.urgency)}</span>`);
+
+            let detection = '';
+            const d = rec.image_detection;
+            if (d) {
+                detection = d.not_pineapple
+                    ? 'Image model: photo not recognized as a pineapple plant.'
+                    : d.error
+                        ? 'Image model: analysis failed.'
+                        : `Image model result: ${d.disease} (${Math.round((d.confidence || 0) * 100)}% confidence, ${d.method || 'model'}).`;
+            }
+            const alternatives = (rec.alternative_matches || []).map(a => a.disease);
+
+            return `
+                <div class="rec-tags">${tags.join('')}</div>
+                <p class="rec-summary">${escapeHtml(rec.summary)}</p>
+                ${rec.actions && rec.actions.length ? `<div class="rec-section"><h4>Recommended actions</h4>${list(rec.actions, true)}</div>` : ''}
+                ${rec.follow_up && rec.follow_up.length ? `<div class="rec-section"><h4>Follow-up</h4>${list(rec.follow_up)}</div>` : ''}
+                ${rec.context_notes && rec.context_notes.length ? `<div class="rec-section"><h4>Field context</h4>${list(rec.context_notes)}</div>` : ''}
+                ${detection ? `<p class="rec-meta"><i class="fas fa-camera"></i> ${escapeHtml(detection)}</p>` : ''}
+                ${alternatives.length ? `<p class="rec-meta">Other possible matches: ${escapeHtml(alternatives.join(', '))}</p>` : ''}
+                <p class="rec-disclaimer">${escapeHtml(rec.disclaimer || '')}</p>
+            `;
+        }
+
+        function renderRecommendationPanel(record) {
+            const panel = document.getElementById('recommendationResult');
+            panel.innerHTML = `
+                <h3><i class="fas fa-lightbulb"></i> Recommendation for ${escapeHtml(record.problem_type)} (${escapeHtml(record.severity)})</h3>
+                ${recommendationHtml(record.recommendation_details || { summary: record.recommendation })}
+            `;
+            panel.hidden = false;
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function validateProblemForm(payload, file) {
+            const errors = {};
+            validatePlotSettings(payload, errors);
+            validateLoggedAt(payload.logged_at, payload.planting_date, 'Problem date/time', errors);
+            if (!payload.problem_type) errors.problem_type = 'Problem type is required.';
+            if (!payload.severity) errors.severity = 'Severity is required.';
+            if (!payload.description) {
+                errors.description = 'Description / observation is required.';
+            } else if (payload.description.length < 5) {
+                errors.description = 'Description / observation must be at least 5 characters.';
+            }
+            if (file) {
+                if (!['image/png', 'image/jpeg'].includes(file.type)) {
+                    errors.image = 'Image must be a PNG or JPG file.';
+                } else if (file.size > 10 * 1024 * 1024) {
+                    errors.image = 'Image must be 10 MB or smaller.';
+                }
+            }
+            return errors;
+        }
+
+        function resetProblemForm() {
+            document.getElementById('problemDescription').value = '';
+            document.getElementById('problemNotes').value = '';
+            document.getElementById('problemImage').value = '';
+            document.getElementById('problemImagePreview').hidden = true;
+            document.getElementById('problemLoggedAt').value = localDateTimeValue();
+        }
+
+        async function logPlantProblem(event) {
+            event.preventDefault();
+            const form = document.getElementById('problemForm');
+            const messageEl = document.getElementById('problemMessage');
+            clearFieldErrors(form);
+            clearFieldErrors(document.querySelector('.forecast-controls'));
+            setFormMessage(messageEl);
+
+            const severity = document.querySelector('input[name="severity"]:checked');
+            const file = document.getElementById('problemImage').files[0] || null;
+            const payload = {
+                ...plotSettings(),
+                logged_at: fieldValue('problemLoggedAt'),
+                problem_type: fieldValue('problemType'),
+                severity: severity ? severity.value : '',
+                description: fieldValue('problemDescription'),
+                notes: fieldValue('problemNotes')
+            };
+
+            const errors = validateProblemForm(payload, file);
+            if (Object.keys(errors).length) {
+                showFieldErrors(errors, PROBLEM_FIELD_INPUTS);
+                setFormMessage(messageEl, 'error', Object.values(errors)[0]);
+                return;
+            }
+
+            const formData = new FormData();
+            Object.entries(payload).forEach(([key, value]) => formData.append(key, value || ''));
+            if (file) formData.append('image', file);
+
+            const button = document.getElementById('logProblemBtn');
+            setBusy(button, true, file ? 'Analyzing photo...' : 'Generating recommendation...');
+            try {
+                const data = await apiRequest('/api/forecast/problems', { method: 'POST', body: formData });
+                setFormMessage(messageEl, 'success', data.message);
+                notify('Plant problem logged successfully.', 'success');
+                renderRecommendationPanel(data.record);
+                resetProblemForm();
+                rememberPlot(data.record.plant_code);
+                await loadPlants();
+                updatePlotHint();
+                await loadProblems();
+            } catch (err) {
+                if (err.errors) showFieldErrors(err.errors, PROBLEM_FIELD_INPUTS);
+                setFormMessage(messageEl, 'error', err.message);
+                notify(err.message, 'error');
+            } finally {
+                setBusy(button, false);
+            }
+        }
+
+        function previewProblemImage() {
+            const input = document.getElementById('problemImage');
+            const preview = document.getElementById('problemImagePreview');
+            const file = input.files[0];
+            if (!file || !file.type.startsWith('image/')) {
+                preview.hidden = true;
+                return;
+            }
+            const img = preview.querySelector('img');
+            if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+            img.dataset.url = URL.createObjectURL(file);
+            img.src = img.dataset.url;
+            preview.hidden = false;
+        }
+
+        // ---------- Problem history ----------
+
+        function statusOptions(selected) {
+            return PROBLEM_STATUSES
+                .map(s => `<option value="${escapeHtml(s)}" ${s === selected ? 'selected' : ''}>${escapeHtml(s)}</option>`)
+                .join('');
+        }
+
+        function renderProblemHistory() {
+            const body = document.getElementById('problemHistoryBody');
+            document.getElementById('problemCount').textContent = problemRecords.length;
+            if (!problemRecords.length) {
+                body.innerHTML = '<tr><td colspan="7"><div class="empty-state">No problems logged yet.</div></td></tr>';
+                return;
+            }
+            body.innerHTML = problemRecords.map(p => `
+                <tr>
+                    <td>${escapeHtml(formatDateTime(p.logged_at))}</td>
+                    <td>${escapeHtml(p.plant_code)}</td>
+                    <td><strong>${escapeHtml(p.problem_type)}</strong><div class="cell-sub">${escapeHtml(truncateText(p.description, 80))}</div></td>
+                    <td>${badge(p.severity)}</td>
+                    <td class="rec-cell"><div class="truncate">${escapeHtml(p.recommendation)}</div></td>
+                    <td>
+                        <select class="status-select" data-problem-id="${escapeHtml(p.id)}" aria-label="Status of ${escapeHtml(p.problem_type)} logged ${escapeHtml(formatDateTime(p.logged_at))}">
+                            ${statusOptions(p.status)}
+                        </select>
+                    </td>
+                    <td>
+                        <button type="button" class="btn btn-primary btn-small" data-view-problem="${escapeHtml(p.id)}">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        async function loadProblems() {
+            const filter = document.getElementById('historyFilter').value;
+            const code = fieldValue('plantCode');
+            const params = new URLSearchParams();
+            if (filter === 'plot' && code) params.set('plant_code', code);
+            try {
+                const data = await apiRequest(`/api/forecast/problems?${params.toString()}`);
+                problemRecords = data.problems || [];
+                renderProblemHistory();
+            } catch (err) {
+                document.getElementById('problemHistoryBody').innerHTML =
+                    `<tr><td colspan="7"><div class="form-message error">${escapeHtml(err.message)}</div></td></tr>`;
+            }
+        }
+
+        async function updateProblemStatus(problemId, status) {
+            const record = problemRecords.find(p => p.id === problemId);
+            try {
+                const data = await apiRequest(`/api/forecast/problems/${encodeURIComponent(problemId)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+                if (record) Object.assign(record, data.record);
+                notify(data.message, 'success');
+                renderProblemHistory();
+                if (activeProblemId === problemId) renderProblemModal(data.record);
+            } catch (err) {
+                notify(err.message, 'error');
+                renderProblemHistory();
+            }
+        }
+
+        function detailItem(label, valueHtml) {
+            return `<div class="status-tile"><div class="tile-label">${escapeHtml(label)}</div><div class="tile-value">${valueHtml}</div></div>`;
+        }
+
+        function renderProblemModal(p) {
+            document.getElementById('problemModalTitle').textContent = `${p.problem_type} · ${p.plant_code}`;
+            const history = (p.status_history || [])
+                .map(h => `<li>${escapeHtml(h.status)} · ${escapeHtml(formatDateTime(h.changed_at))}</li>`)
+                .join('');
+            document.getElementById('problemModalBody').innerHTML = `
+                <div class="detail-grid">
+                    ${detailItem('Logged', escapeHtml(formatDateTime(p.logged_at)))}
+                    ${detailItem('Plant/Plot', escapeHtml(p.plant_code))}
+                    ${detailItem('Days after planting', escapeHtml(p.days_after_planting != null ? p.days_after_planting : '--'))}
+                    ${detailItem('Severity', badge(p.severity))}
+                    ${detailItem('Status', badge(p.status))}
+                    ${detailItem('Last updated', escapeHtml(formatDateTime(p.updated_at)))}
+                </div>
+                <h4>Description / Observation</h4>
+                <p class="detail-text">${escapeHtml(p.description)}</p>
+                ${p.notes ? `<h4>Additional notes</h4><p class="detail-text">${escapeHtml(p.notes)}</p>` : ''}
+                ${p.image_path ? `<h4>Photo</h4><img class="detail-image" src="/api/forecast/problems/${encodeURIComponent(p.id)}/image" alt="Photo of the reported ${escapeHtml(p.problem_type.toLowerCase())}">` : ''}
+                <div class="modal-status-row">
+                    <label for="modalStatusSelect"><strong>Status</strong></label>
+                    <select id="modalStatusSelect" class="status-select">${statusOptions(p.status)}</select>
+                    <button type="button" class="btn btn-primary btn-small" id="modalStatusSave"><i class="fas fa-check"></i> Update Status</button>
+                </div>
+                <h4>Recommendation</h4>
+                <div class="recommendation-panel" style="margin-top: 0;">
+                    ${recommendationHtml(p.recommendation_details || { summary: p.recommendation })}
+                </div>
+                ${history ? `<h4>Status history</h4><ul class="status-timeline">${history}</ul>` : ''}
+            `;
+            document.getElementById('modalStatusSave').addEventListener('click', () => {
+                updateProblemStatus(p.id, document.getElementById('modalStatusSelect').value);
+            });
+        }
+
+        async function openProblemDetails(problemId) {
+            activeProblemId = problemId;
+            const modal = document.getElementById('problemModal');
+            document.getElementById('problemModalTitle').textContent = 'Problem details';
+            document.getElementById('problemModalBody').innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+            modal.hidden = false;
+            document.body.style.overflow = 'hidden';
+            document.getElementById('problemModalClose').focus();
+            try {
+                const data = await apiRequest(`/api/forecast/problems/${encodeURIComponent(problemId)}`);
+                if (activeProblemId === problemId) renderProblemModal(data.record);
+            } catch (err) {
+                document.getElementById('problemModalBody').innerHTML = `<div class="form-message error">${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function closeProblemModal() {
+            const modal = document.getElementById('problemModal');
+            if (modal.hidden) return;
+            modal.hidden = true;
+            activeProblemId = null;
+            document.body.style.overflow = '';
+        }
+
+        // ---------- Monthly growth & size prediction ----------
+
+        const todayLinePlugin = {
+            id: 'todayLine',
+            afterDatasetsDraw(chart, args, options) {
+                if (!options || typeof options.x !== 'number') return;
+                const x = chart.scales.x.getPixelForValue(options.x);
+                const { top, bottom, left, right } = chart.chartArea;
+                if (x < left || x > right) return;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, bottom);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#b45309';
+                ctx.font = '600 11px Inter, sans-serif';
+                ctx.fillText('Today', x + 4, top + 12);
+                ctx.restore();
+            }
+        };
+
+        function renderGrowthChart() {
+            if (!predictionData) return;
+            const meta = METRICS[currentMetric];
+            const months = predictionData.months || [];
+            const rows = months.filter(r => r[currentMetric] !== null && r[currentMetric] !== undefined);
+            const actual = ((predictionData.actual_series || {})[currentMetric] || [])
+                .map(p => ({ x: p.x, y: p.value, loggedAt: p.logged_at }));
+            const emptyEl = document.getElementById('growthChartEmpty');
+            const canvas = document.getElementById('growthChart');
+
+            if (growthChart) {
+                growthChart.destroy();
+                growthChart = null;
+            }
+            if (!rows.length && !actual.length) {
+                emptyEl.textContent = currentMetric === 'height_cm'
+                    ? 'No growth data available yet.'
+                    : 'Fruit size is predicted once the plant reaches the fruit development stage.';
+                emptyEl.hidden = false;
+                canvas.hidden = true;
+                return;
+            }
+            emptyEl.hidden = true;
+            canvas.hidden = false;
+
+            const pastRows = rows.filter(r => r.phase === 'past');
+            const futureRows = rows.filter(r => r.phase !== 'past');
+            const predicted = futureRows.map(r => ({ x: r.month, y: r[currentMetric], range: r[`${currentMetric}_range`] }));
+            const anchor = actual.length ? actual[actual.length - 1] : null;
+            if (anchor && predicted.length && anchor.x < predicted[0].x) {
+                predicted.unshift({ x: anchor.x, y: anchor.y, anchor: true });
+            }
+            const modelFit = pastRows.map(r => ({ x: r.month, y: r[currentMetric] }));
+            if (modelFit.length && futureRows.length) {
+                modelFit.push({ x: futureRows[0].month, y: futureRows[0][currentMetric] });
+            }
+            const band = futureRows.filter(r => r[`${currentMetric}_range`]);
+
+            growthChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Confidence range',
+                            data: band.map(r => ({ x: r.month, y: r[`${currentMetric}_range`][1] })),
+                            borderWidth: 0,
+                            pointRadius: 0,
+                            pointHitRadius: 0,
+                            backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                            fill: false,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Confidence range (low)',
+                            data: band.map(r => ({ x: r.month, y: r[`${currentMetric}_range`][0] })),
+                            borderWidth: 0,
+                            pointRadius: 0,
+                            pointHitRadius: 0,
+                            backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                            fill: '-1',
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Model estimate (past months)',
+                            data: modelFit,
+                            borderColor: '#94a3b8',
+                            borderDash: [2, 4],
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Predicted',
+                            data: predicted,
+                            borderColor: '#10b981',
+                            backgroundColor: '#10b981',
+                            borderDash: [7, 5],
+                            borderWidth: 2.5,
+                            pointRadius: (ctx) => (ctx.raw && ctx.raw.anchor ? 0 : 3.5),
+                            fill: false,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Actual (measured)',
+                            data: actual,
+                            borderColor: '#2563eb',
+                            backgroundColor: '#2563eb',
+                            borderWidth: 2.5,
+                            pointRadius: 5,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'nearest', intersect: false },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            min: 0,
+                            max: months.length,
+                            ticks: { stepSize: 1, callback: (v) => (Number.isInteger(v) ? `M${v}` : '') },
+                            title: { display: true, text: 'Months after planting' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: `${meta.label} (${meta.unit})` }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { filter: (item) => item.datasetIndex !== 1 } },
+                        tooltip: {
+                            filter: (item) => item.datasetIndex > 1,
+                            callbacks: {
+                                title: (items) => {
+                                    const raw = items[0] && items[0].raw;
+                                    if (raw && raw.loggedAt) return `Measured ${formatDateTime(raw.loggedAt)}`;
+                                    return items[0] ? `Month ${Number(items[0].parsed.x).toFixed(Number.isInteger(items[0].parsed.x) ? 0 : 1)}` : '';
+                                },
+                                label: (ctx) => {
+                                    let text = `${ctx.dataset.label}: ${formatNumber(ctx.parsed.y, meta.digits, meta.unit)}`;
+                                    if (ctx.raw && ctx.raw.range) {
+                                        text += ` (range ${formatNumber(ctx.raw.range[0], meta.digits)}–${formatNumber(ctx.raw.range[1], meta.digits, meta.unit)})`;
+                                    }
+                                    return text;
+                                }
+                            }
+                        },
+                        todayLine: { x: predictionData.today_x }
+                    }
+                },
+                plugins: [todayLinePlugin]
+            });
+        }
+
+        function predictionCell(row, metric) {
+            const meta = METRICS[metric];
+            const predicted = formatNumber(row[metric], meta.digits);
+            const actual = row.actual ? row.actual[metric] : undefined;
+            if (actual !== undefined && actual !== null) {
+                return `${escapeHtml(formatNumber(actual, meta.digits))}<span class="measured-tag">measured · est. ${escapeHtml(predicted)}</span>`;
+            }
+            return escapeHtml(predicted);
+        }
+
+        function rowType(row) {
+            if (row.phase === 'current') return '<span class="badge badge-healthy">Current</span>';
+            if (row.phase === 'future') return '<span class="badge badge-estimate">Predicted</span>';
+            return row.actual ? '<span class="badge badge-open">Actual</span>' : '<span class="badge badge-neutral">Estimated</span>';
+        }
+
+        function renderPredictionTable() {
+            const body = document.getElementById('predictionTableBody');
+            const months = (predictionData && predictionData.months) || [];
+            if (!months.length) {
+                body.innerHTML = '<tr><td colspan="10"><div class="empty-state">No predictions available.</div></td></tr>';
+                return;
+            }
+            body.innerHTML = months.map(r => `
+                <tr class="row-${escapeHtml(r.phase)}">
+                    <td><strong>Month ${escapeHtml(r.month)}</strong></td>
+                    <td class="num">${escapeHtml(r.days_after_planting)}</td>
+                    <td>${escapeHtml(formatDate(r.date))}</td>
+                    <td>${escapeHtml(r.growth_stage)}</td>
+                    <td class="num">${predictionCell(r, 'height_cm')}</td>
+                    <td class="num">${predictionCell(r, 'fruit_diameter_cm')}</td>
+                    <td class="num">${predictionCell(r, 'fruit_length_cm')}</td>
+                    <td class="num">${predictionCell(r, 'weight_kg')}</td>
+                    <td class="num">${escapeHtml(Math.round((r.confidence || 0) * 100))}%</td>
+                    <td>${rowType(r)}</td>
+                </tr>`).join('');
+        }
+
+        function renderPredictionMeta() {
+            const p = predictionData;
+            const profileLabel = document.querySelector(`#profile option[value="${p.profile_used}"]`);
+            const measurements = p.model?.calibration?.height_cm?.measurements || 0;
+            document.getElementById('predictionMeta').textContent =
+                `Profile: ${profileLabel ? profileLabel.textContent : p.profile_used} · Now: month ${p.current_month} ` +
+                `(${p.days_after_planting} days after planting) · Harvest expected around month ${p.harvest_month} · ` +
+                `Height calibrated with ${measurements} measurement(s).`;
+            document.getElementById('predictionNotes').innerHTML = (p.notes || [])
+                .concat(p.disclaimer ? [p.disclaimer] : [])
+                .map(n => `<li>${escapeHtml(n)}</li>`)
+                .join('');
+        }
+
+        async function loadPredictions(persist = false) {
+            const requestId = ++predictionRequestId;
+            const settings = plotSettings();
+            const params = new URLSearchParams({
+                planting_date: settings.planting_date,
+                profile: settings.profile,
+                horizon_days: settings.horizon_days,
+                history_days: settings.history_days
+            });
+            if (settings.cycle_days) params.set('cycle_days', settings.cycle_days);
+            if (settings.plant_code) params.set('plant_code', settings.plant_code);
+            if (persist) params.set('persist', '1');
+
+            const messageEl = document.getElementById('predictionMessage');
+            const body = document.getElementById('predictionTableBody');
+            const emptyEl = document.getElementById('growthChartEmpty');
+            const canvas = document.getElementById('growthChart');
+            const hasCurrentData = predictionData && predictionPlotCode === settings.plant_code;
+            if (!hasCurrentData) {
+                predictionData = null;
+                if (growthChart) growthChart.destroy();
+                growthChart = null;
+                canvas.hidden = true;
+                emptyEl.hidden = false;
+                emptyEl.textContent = 'Loading growth predictions...';
+                body.innerHTML = '<tr><td colspan="10"><div class="empty-state">Loading predictions...</div></td></tr>';
+                document.getElementById('predictionMeta').textContent = '';
+                document.getElementById('predictionNotes').innerHTML = '';
+            }
+            messageEl.hidden = true;
+            body.setAttribute('aria-busy', 'true');
+            try {
+                const data = await apiRequest(`/api/forecast/growth-predictions?${params.toString()}`);
+                if (requestId !== predictionRequestId) return;
+                if (!data.predictions || !Array.isArray(data.predictions.months)) {
+                    throw new Error('The server returned no monthly predictions. Please try again.');
+                }
+                predictionData = data.predictions;
+                predictionPlotCode = settings.plant_code;
+                messageEl.textContent = data.warning || '';
+                messageEl.hidden = !data.warning;
+                renderPredictionMeta();
+                renderPredictionTable();
+                renderGrowthChart();
+            } catch (err) {
+                if (requestId !== predictionRequestId) return;
+                messageEl.textContent = err.message;
+                messageEl.hidden = false;
+                if (!predictionData) {
+                    body.innerHTML = '<tr><td colspan="10"><div class="empty-state">Predictions could not be loaded. Use Refresh to try again.</div></td></tr>';
+                }
+                if (!growthChart) {
+                    canvas.hidden = true;
+                    emptyEl.hidden = false;
+                    emptyEl.textContent = 'Growth chart could not be loaded. Use Refresh to try again.';
+                }
+            } finally {
+                if (requestId === predictionRequestId) body.setAttribute('aria-busy', 'false');
+            }
+        }
+
+        // ---------- Setup ----------
+
+        function initMonitoring() {
+            const now = localDateTimeValue();
+            ['statusLoggedAt', 'problemLoggedAt'].forEach((id) => {
+                const input = document.getElementById(id);
+                input.value = now;
+                input.max = now;
+            });
+
+            document.getElementById('statusForm').addEventListener('submit', saveCurrentStatus);
+            document.getElementById('problemForm').addEventListener('submit', logPlantProblem);
+            document.getElementById('plantCode').addEventListener('change', onPlotChanged);
+            document.getElementById('savedPlots').addEventListener('change', (event) => {
+                if (!event.target.value) return;
+                document.getElementById('plantCode').value = event.target.value;
+                onPlotChanged();
+            });
+            document.getElementById('plantingDate').addEventListener('change', updateDaysAfterPlanting);
+            document.getElementById('statusLoggedAt').addEventListener('input', updateDaysAfterPlanting);
+            document.getElementById('statusStage').addEventListener('change', () => { statusStageTouched = true; });
+            document.getElementById('problemImage').addEventListener('change', previewProblemImage);
+            document.getElementById('historyFilter').addEventListener('change', loadProblems);
+
+            document.querySelectorAll('.metric-toggle button').forEach((button) => {
+                button.addEventListener('click', () => {
+                    currentMetric = button.dataset.metric;
+                    document.querySelectorAll('.metric-toggle button').forEach((b) => {
+                        b.setAttribute('aria-pressed', String(b === button));
+                    });
+                    renderGrowthChart();
+                });
+            });
+
+            const historyBody = document.getElementById('problemHistoryBody');
+            historyBody.addEventListener('change', (event) => {
+                const select = event.target.closest('select[data-problem-id]');
+                if (select) updateProblemStatus(select.dataset.problemId, select.value);
+            });
+            historyBody.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-view-problem]');
+                if (button) openProblemDetails(button.dataset.viewProblem);
+            });
+
+            document.getElementById('problemModalClose').addEventListener('click', closeProblemModal);
+            document.getElementById('problemModal').addEventListener('click', (event) => {
+                if (event.target.id === 'problemModal') closeProblemModal();
+            });
+        }
+
+        window.addEventListener('load', async () => {
             setDefaultPlantingDate();
             applyProfileDefaults();
-            loadForecast();
+            initMonitoring();
+
+            await loadPlants();
+            const remembered = storedPlot();
+            const initialPlant = findPlant(remembered) || knownPlants[0] || null;
+            if (initialPlant) {
+                applyPlantSettings(initialPlant);
+            } else {
+                document.getElementById('plantCode').value = remembered || 'PLOT-1';
+            }
+            updatePlotHint();
+            updateDaysAfterPlanting();
+            refreshAll();
         });
     </script>
 </body>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    {% set title = 'Terms of Service' if policy == 'terms' else 'Privacy Policy' %}
+    <title>{{ title }} - AgriPinya</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/legal.css') }}">
+</head>
+<body>
+    <main class="legal-card">
+        <a class="brand" href="{{ url_for('landing') }}">AgriPinya</a>
+        <nav aria-label="Policies">
+            <a href="{{ url_for('terms_of_service') }}" {% if policy == 'terms' %}aria-current="page"{% endif %}>Terms of Service</a>
+            <a href="{{ url_for('privacy_policy') }}" {% if policy == 'privacy' %}aria-current="page"{% endif %}>Privacy Policy</a>
+        </nav>
+        <h1>{{ title }}</h1>
+        <p class="updated">Last updated: October 23, 2026</p>
+
+        {% if policy == 'terms' %}
+        <section aria-labelledby="purpose">
+            <h2 id="purpose">1. Using AgriPinya</h2>
+            <p>AgriPinya supports pineapple farm monitoring through sensor readings, disease image analysis, forecasts, reports, and irrigation controls. By creating an account and using the service, you agree to use these features responsibly and only for farms and devices you are authorized to manage.</p>
+        </section>
+        <section aria-labelledby="accounts">
+            <h2 id="accounts">2. Your account</h2>
+            <p>Provide accurate registration details, keep your password private, and tell your administrator if you suspect someone else has accessed your account. New staff accounts require administrator approval. Your role and account status determine which features you can access.</p>
+        </section>
+        <section aria-labelledby="responsible-use">
+            <h2 id="responsible-use">3. Responsible use</h2>
+            <p>Upload only images and information you have permission to use. Do not attempt to access another person's account, interfere with the service, or change devices and farm records without authorization. Administrators may restrict access through account approval and status controls.</p>
+        </section>
+        <section aria-labelledby="results">
+            <h2 id="results">4. Results and equipment</h2>
+            <p>Disease predictions, forecasts, and recommendations are decision support tools and may be inaccurate. Check plant conditions and seek qualified agricultural advice when needed before choosing a treatment. Confirm irrigation settings and monitor connected equipment to avoid unintended watering.</p>
+        </section>
+        <section aria-labelledby="availability">
+            <h2 id="availability">5. Service availability</h2>
+            <p>Features depend on working sensors, power, network connections, and configured services. Readings and controls may be unavailable or delayed during interruptions or maintenance. Check the time and condition of readings before acting on them.</p>
+        </section>
+        <section aria-labelledby="questions">
+            <h2 id="questions">6. Privacy and questions</h2>
+            <p>Read the <a href="{{ url_for('privacy_policy') }}">Privacy Policy</a> for information about account and farm data. Contact the administrator who manages your AgriPinya account for questions about these terms or your access.</p>
+        </section>
+        {% else %}
+        <section aria-labelledby="collected">
+            <h2 id="collected">1. Information collected</h2>
+            <p>Registration collects your name, email address, password, and optional phone number. Passwords are stored as hashes. Account records also include your role, approval status, registration date, and last login. The service stores session and password reset information to support sign in and account recovery.</p>
+            <p>When you use farm features, the service may store uploaded images, disease analysis results, sensor readings, plot and plant records, forecasts, irrigation settings, reports, and notifications, including associated dates and account identifiers.</p>
+        </section>
+        <section aria-labelledby="uses">
+            <h2 id="uses">2. How information is used</h2>
+            <p>Information supports account registration and approval, authentication, password recovery, farm monitoring, analysis, reports, and configured notifications. Administrators manage account access and may view information available through their management features.</p>
+        </section>
+        <section aria-labelledby="storage">
+            <h2 id="storage">3. Storage and connected services</h2>
+            <p>The application stores records and uploaded files on its host and uses Google Firebase / Firestore for configured cloud records. Configured email or SMS providers process recipient details and message content when those features are used. Access to farm features depends on your account permissions.</p>
+        </section>
+        <section aria-labelledby="browser-storage">
+            <h2 id="browser-storage">4. Cookies and browser storage</h2>
+            <p>A session cookie keeps you signed in. Older browsers may retain a previously saved language preference. The installable app may cache public application resources for loading and offline use. Signing out ends your session; clearing site data removes browser-stored settings and cached resources but does not delete server records.</p>
+        </section>
+        <section aria-labelledby="retention">
+            <h2 id="retention">5. Retention and requests</h2>
+            <p>Signing out does not delete saved account or farm records. Stored records and backups are managed by the application administrator. Contact the administrator who manages your AgriPinya account for retention details or to request access, correction, or deletion of your information. Requests may require identity verification and consideration of applicable recordkeeping requirements.</p>
+            <p>You can learn about your privacy rights and complaint options from the <a href="https://privacy.gov.ph/data-subject-rights/" target="_blank" rel="noopener noreferrer">National Privacy Commission</a>.</p>
+        </section>
+        {% endif %}
+
+        <footer>
+            <p>If you opened this page from sign up, close this tab to continue with your form.</p>
+            <a class="signup-button" href="{{ url_for('signup') }}">Go to sign up</a>
+        </footer>
+    </main>
+</body>
+</html>

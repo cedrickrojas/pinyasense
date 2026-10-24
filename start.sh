@@ -53,8 +53,10 @@ echo "=================================================="
 
 # Safe default GPIO assignments for local startup (can still be overridden
 # by existing exported environment variables before launching this script).
-export SOIL_MOISTURE_PIN="${SOIL_MOISTURE_PIN:-17}"
-export DHT_PIN="${DHT_PIN:-4}"
+# 4 capacitive soil moisture sensors (one per zone) on GPIO 22, 23, 24, 25;
+# relay/water pump on GPIO 27.
+export SOIL_MOISTURE_PINS="${SOIL_MOISTURE_PINS:-22,23,24,25}"
+export SOIL_MOISTURE_PIN="${SOIL_MOISTURE_PIN:-22}"
 export WATER_PUMP_PIN="${WATER_PUMP_PIN:-27}"
 export WATER_PUMP_ACTIVE_LOW="${WATER_PUMP_ACTIVE_LOW:-0}"
 

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin | PiñaSense</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <style>
+        :root { --navy:#081426; --panel:#10243b; --line:rgba(148,163,184,.18); --text:#e7f0f7; --muted:#91a5b8; --green:#32d296; --cyan:#54c7e8; --amber:#f6c453; --red:#ff7272; }
+        * { box-sizing:border-box; } body { margin:0; min-height:100vh; background:radial-gradient(circle at 80% 0%,#183957 0,transparent 35%),var(--navy); color:var(--text); font-family:Segoe UI,Arial,sans-serif; }
+        .layout { display:grid; grid-template-columns:245px minmax(0,1fr); min-height:100vh; } aside { position:sticky; top:0; align-self:start; height:100vh; padding:24px 15px; background:rgba(5,16,31,.95); border-right:1px solid var(--line); width:245px; overflow-y:auto; overflow-x:hidden; } .brand { display:flex; gap:10px; align-items:center; padding:0 10px 24px; border-bottom:1px solid var(--line); } .brand i { color:var(--green); font-size:1.7rem; } .brand strong { letter-spacing:.08em; display:block; } .brand small { color:var(--cyan); }
+        nav { margin-top:20px; display:flex; flex-direction:column; min-height:calc(100vh - 155px); padding-bottom:16px; } nav a { display:flex; gap:11px; padding:11px 12px; margin:3px 0; border-radius:7px; color:var(--muted); text-decoration:none; transition:all .2s ease; } nav a:hover,nav a.active { color:var(--text); background:rgba(84,199,232,.12); box-shadow:inset 0 0 0 1px rgba(84,199,232,.2); } nav i { width:18px; text-align:center; } .nav-section { color:#607890; font-size:.66rem; font-weight:700; letter-spacing:.16em; margin:20px 12px 6px; } .nav-spacer { flex:1; }
+        main { max-width:1250px; width:100%; padding:35px clamp(18px,4vw,55px); } .eyebrow { color:var(--cyan); font-size:.73rem; letter-spacing:.16em; text-transform:uppercase; font-weight:700; } h1 { margin:7px 0; font-size:clamp(1.7rem,3vw,2.6rem); } h2 { font-size:1rem; margin:0 0 16px; } .muted { color:var(--muted); } .card { background:linear-gradient(145deg,rgba(20,44,70,.95),rgba(13,31,51,.95)); border:1px solid var(--line); border-radius:10px; padding:20px; margin-top:18px; } .list { display:grid; gap:12px; } .item { padding:13px 0; border-bottom:1px solid var(--line); } .item:last-child { border:0; } .item strong { display:block; } .item small { color:var(--muted); } .metric-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; } .metric { background:rgba(84,199,232,.07); border:1px solid var(--line); padding:16px; border-radius:8px; } .metric label { color:var(--muted); font-size:.78rem; } .metric b { display:block; font-size:1.8rem; margin-top:9px; } .top { display:flex; justify-content:space-between; align-items:flex-start; gap:15px; } .chip { color:var(--green); border:1px solid rgba(50,210,150,.35); padding:9px 12px; border-radius:7px; font-size:.8rem; }
+        .mobile-menu-toggle, .sidebar-backdrop { display:none; }
+        @media(max-width:850px){
+            html, body { overflow-x:hidden; }
+            .layout { display:block; min-height:100svh; }
+            aside { position:fixed; inset:0 auto 0 0; width:min(82vw,280px); height:100svh; padding:14px; transform:translateX(-100%); transition:transform .25s ease; z-index:20; }
+            aside.mobile-open { transform:translateX(0); }
+            nav { display:flex; overflow-y:auto; gap:4px; margin-top:12px; min-height:auto; }
+            nav a { white-space:nowrap; }
+            .nav-section { display:none; }
+            main { width:100%; max-width:none; padding:64px 16px 24px; }
+            .mobile-menu-toggle { display:flex; position:fixed; top:12px; left:12px; align-items:center; justify-content:center; width:44px; height:44px; border:1px solid rgba(84,199,232,.35); border-radius:8px; background:#102b45; color:var(--text); z-index:30; font-size:1.05rem; cursor:pointer; touch-action:manipulation; }
+            .sidebar-backdrop { position:fixed; inset:0; background:rgba(2,6,23,.68); z-index:15; }
+            body.mobile-nav-open .sidebar-backdrop { display:block; }
+            .metric-grid { grid-template-columns:repeat(2,1fr); }
+        }
+        @media(max-width:600px){ .top{flex-direction:column}.metric-grid{gap:9px}.metric b{font-size:1.4rem}.chip{align-self:flex-start}.card{padding:15px} }
+    </style>
+<script src="{{ url_for('static', filename='js/html-utils.js') }}"></script>
+</head>
+<body>
+<button class="mobile-menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" onclick="toggleAdminNav()"><i class="fas fa-bars"></i></button>
+<div class="sidebar-backdrop" onclick="toggleAdminNav()"></div>
+<div class="layout"><aside><div class="brand"><i class="fas fa-leaf"></i><div><strong>PINYASENSE</strong><small>Super Admin</small></div></div><nav>
+<div class="nav-section">MAIN</div><a href="/super-admin/dashboard"><i class="fas fa-grid-2"></i>Dashboard</a>
+<div class="nav-section">MANAGEMENT</div><a data-page="staff-requests" href="/admin/staff-requests"><i class="fas fa-users"></i>Staff Accounts</a><a data-page="notifications" href="/admin/notifications"><i class="fas fa-bell"></i>Notifications</a><a data-page="activity-logs" href="/admin/activity-logs"><i class="fas fa-list-check"></i>Activity Logs</a>
+<div class="nav-section">MONITORING</div><a data-page="alerts" href="/admin/alerts"><i class="fas fa-triangle-exclamation"></i>Alerts</a>
+<div class="nav-section">ANALYTICS</div><a data-page="analytics" href="/admin/analytics"><i class="fas fa-chart-line"></i>System Analytics</a><a data-page="reports" href="/admin/reports"><i class="fas fa-file-lines"></i>Reports</a>
+<div class="nav-section">SYSTEM</div><a data-page="settings" href="/admin/settings"><i class="fas fa-sliders"></i>System Settings</a><a href="/dashboard"><i class="fas fa-seedling"></i>Operations View</a><span class="nav-spacer"></span><a href="#" onclick="logout();return false;"><i class="fas fa-right-from-bracket"></i>Logout</a>
+</nav></aside>
+<main><div class="top"><div><div class="eyebrow">System control center</div><h1 id="title">Loading...</h1><div class="muted" id="subtitle"></div></div><div class="chip"><i class="fas fa-shield-halved"></i> SUPER ADMIN</div></div><div id="content"></div></main></div>
+<script>
+if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+window.scrollTo(0, 0);
+const page={{ active_page|tojson }};
+const meta={notifications:['Notifications','System notifications and unread activity.'], 'activity-logs':['Activity Logs','Recent account and system activity available to the platform.'], alerts:['Alerts','Live sensor and device warnings.'], analytics:['System Analytics','System-wide AI and staff account metrics.'], reports:['Reports','Current system summary based on available records.'], settings:['System Settings','Supported PinyaSense configuration and service status.']};
+const [title,subtitle]=meta[page]||['Super Admin','System control center']; document.getElementById('title').textContent=title; document.getElementById('subtitle').textContent=subtitle; document.querySelectorAll('[data-page]').forEach(link=>link.classList.toggle('active',link.dataset.page===page));
+const item=(title,description,time='')=>`<div class="item"><strong>${escapeHtml(title)}</strong><small>${description}${time?`<br>${escapeHtml(time)}`:''}</small></div>`;
+async function load(){
+ const content=document.getElementById('content');
+ if(page==='notifications'){const r=await fetch('/api/notifications');const d=await r.json();content.innerHTML=`<div class="card"><h2>Notifications</h2><div class="list">${(d.notifications||[]).map(n=>item(n.title||'Notification',escapeHtml(n.message||''),n.created_at?new Date(n.created_at).toLocaleString():'')).join('')||'<div class="muted">No notifications recorded.</div>'}</div></div>`;return;}
+ if(page==='alerts'){
+  const [zoneResponse,p]=await Promise.all([
+   fetch('/api/sensors/soil-moisture/arduino-zones').then(r=>r.json()),
+   fetch('/api/water-pump/status').then(r=>r.json())
+  ]);
+  const alerts=[];
+  const zones=Array.isArray(zoneResponse.zones)?zoneResponse.zones.filter(zone=>zone&&!zone.error&&Number.isFinite(Number(zone.value))):[];
+  if(zones.length){
+   const average=Math.round(zones.reduce((total,zone)=>total+Number(zone.value),0)/zones.length);
+   const state=average<=30?'DRY':average<=70?'MOIST':'WET';
+   const zoneSummary=zones.map(zone=>`Zone ${Number(zone.zone)||'?'}: ${Number(zone.value)}% ${escapeHtml(zone.state||zone.status||'')}`).join(' · ');
+   const source=String(zoneResponse.source||'').startsWith('simulated')?' · Simulated daily data':'';
+   alerts.push(item(`Current soil moisture: ${average}% ${state}`,`${zones.length} Arduino zone(s)${source}<br>${zoneSummary}`));
+   const dryZones=(zoneResponse.sensor_live===true?zones:[]).filter(zone=>String(zone.state||zone.status||'').toLowerCase()==='dry');
+   if(dryZones.length)alerts.push(item('Low soil moisture',`${dryZones.map(zone=>`Zone ${Number(zone.zone)||'?'}`).join(', ')} require watering.`));
+  }else{
+   const s=await fetch('/api/sensors/soil-moisture').then(r=>r.json());
+   if(s.error)alerts.push(item('Soil moisture sensor offline',escapeHtml(s.error)));
+   else alerts.push(item(`Current soil moisture: ${s.value}${escapeHtml(s.unit||'%')}`,escapeHtml(s.recommendation||s.status||'Current sensor reading')));
+   if(s.alert)alerts.push(item('Soil moisture alert',escapeHtml(s.recommendation||'The sensor reported an alert.')));
+  }
+  if(p.error)alerts.push(item('Water pump warning',escapeHtml(p.error)));
+  content.innerHTML=`<div class="card"><h2>Alerts</h2><div class="list">${alerts.join('')||'<div class="muted">No active alerts detected.</div>'}</div></div>`;
+  return;
+ }
+ if(page==='settings'){content.innerHTML='<div class="card"><h2>Supported Settings</h2><div class="list">'+item('Authentication','Roles and approvals are managed by the existing account system.')+item('Irrigation','Automatic watering and schedules are managed in the existing Water Pump page.')+item('Sensors','GPIO and sensor configuration remain controlled by backend environment settings.')+'</div></div>';return;}
+ const [staff,stats]=await Promise.all([fetch('/api/admin/staff-requests').then(r=>r.json()),fetch('/api/stats').then(r=>r.json())]);const accounts=staff.staff||[];const counts=stats.disease_count||{};const healthy=counts.Healthy||0;
+ if(page==='analytics'){content.innerHTML=`<div class="metric-grid"><div class="metric"><label>Total Staff</label><b>${accounts.length}</b></div><div class="metric"><label>Pending Staff</label><b>${accounts.filter(x=>x.status==='pending').length}</b></div><div class="metric"><label>Total Detections</label><b>${stats.total_detections||0}</b></div><div class="metric"><label>Healthy Results</label><b>${healthy}</b></div></div><div class="card"><h2>Disease Distribution</h2><div class="list">${Object.entries(counts).map(([name,count])=>item(name,`${count} detection(s)`)).join('')||'<div class="muted">No detection records.</div>'}</div></div>`;return;}
+ if(page==='reports'){const forecastResponse=await fetch('/api/admin/forecast?email=agripinyaa%40gmail.com');const forecastData=await forecastResponse.json();if(!forecastResponse.ok||forecastData.error)throw new Error(forecastData.error||'Unable to load forecast results');const forecastItems=(forecastData.forecasts||[]).map(entry=>{const s=entry.summary||{};const p=entry.plant||{};return item(`${p.plant_code||'Unnamed plot'}`,`Stage: ${escapeHtml(s.predicted_growth_stage||'--')} · Harvest: ${escapeHtml(s.optimal_harvest_date||'--')} · Confidence: ${s.forecast_confidence != null ? `${(s.forecast_confidence*100).toFixed(1)}%` : '--'}${entry.warnings?.length?`<br>${entry.warnings.map(w=>escapeHtml(w)).join('<br>')}`:''}`)}).join('');content.innerHTML=`<div class="card"><h2>Forecast Results</h2><div class="muted">${escapeHtml(forecastData.email)}${forecastItems?'':' · No saved plots found.'}</div><div class="list">${forecastItems||'<div class="muted">No forecast results available.</div>'}</div></div>`;return;}
+ content.innerHTML=`<div class="card"><h2>Activity Logs</h2><div class="list">${accounts.map(x=>item('Staff account activity',`${escapeHtml(x.fullname||x.email)} · ${escapeHtml(x.status)}`,x.created_at?new Date(x.created_at).toLocaleString():'')).join('')||'<div class="muted">No activity recorded.</div>'}</div></div>`;
+}
+async function logout(){await fetch('/api/logout',{method:'POST'});location='/login';} load().catch(error=>document.getElementById('content').innerHTML=`<div class="card">Unable to load data: ${escapeHtml(error.message)}</div>`);
+function toggleAdminNav(){
+    const sidebar=document.querySelector('aside');
+    const toggle=document.querySelector('.mobile-menu-toggle');
+    const open=sidebar.classList.toggle('mobile-open');
+    document.body.classList.toggle('mobile-nav-open',open);
+    toggle.setAttribute('aria-expanded',String(open));
+    toggle.innerHTML=`<i class="fas fa-${open?'xmark':'bars'}"></i>`;
+}
+document.querySelectorAll('aside a').forEach(link=>link.addEventListener('click',()=>{
+    if(window.matchMedia('(max-width: 850px)').matches && document.body.classList.contains('mobile-nav-open')) toggleAdminNav();
+}));
+</script></body></html>

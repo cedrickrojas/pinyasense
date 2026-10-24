@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
     <title>Soil Moisture Sensor - AgriPinya</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -249,7 +250,99 @@
             font-size: 2rem;
             opacity: 0.8;
         }
-        
+
+        .zone-grid-section {
+            margin-bottom: 30px;
+        }
+
+        .zone-grid-section h2 {
+            margin-bottom: 6px;
+            color: #ffffff;
+        }
+
+        .zone-summary {
+            color: #cbd5e1;
+            font-size: 0.95rem;
+            margin: 0 0 18px 0;
+        }
+
+        .zone-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 18px;
+        }
+
+        .zone-card {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 22px;
+            box-shadow: var(--box-shadow);
+            text-align: center;
+            border-top: 5px solid #94a3b8;
+            transition: var(--transition);
+        }
+
+        .zone-card.wet {
+            border-top-color: #0ea5e9;
+        }
+
+        .zone-card.moist {
+            border-top-color: #10b981;
+        }
+
+        .zone-card.dry {
+            border-top-color: #ef4444;
+        }
+
+        .zone-card.disconnected {
+            border-top-color: #f59e0b;
+        }
+
+        .zone-card .zone-icon {
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+            color: #94a3b8;
+        }
+
+        .zone-card.wet .zone-icon {
+            color: #0ea5e9;
+        }
+
+        .zone-card.moist .zone-icon {
+            color: #10b981;
+        }
+
+        .zone-card.dry .zone-icon {
+            color: #ef4444;
+        }
+
+        .zone-card.disconnected .zone-icon {
+            color: #f59e0b;
+        }
+
+        .zone-card .zone-label {
+            font-weight: 700;
+            color: var(--dark-color);
+            margin-bottom: 4px;
+        }
+
+        .zone-card .zone-pin {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 14px;
+        }
+
+        .zone-card .zone-state {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .zone-card .zone-raw {
+            font-size: 0.8rem;
+            color: #666;
+        }
+
             .chart-card canvas {
                 max-width: 100% !important;
             }
@@ -329,19 +422,12 @@
                 <i class="fas fa-leaf"></i>
                 <span data-i18n="brand">AgriPinya</span>
             </a>
-            <div class="language-selector">
-                <select id="languageSelect" onchange="changeLanguage()">
-                    <option value="en">English</option>
-                    <option value="tl">Tagalog</option>
-                    <option value="es">Español</option>
-                </select>
-            </div>
         </div>
         <ul class="sidebar-menu">
             <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
             <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
             <li><a href="/sensors/soil-moisture" class="active"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
-            <li><a href="/sensors/water-pump"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <li><a href="/sensors/water-pump"><i class="fas fa-faucet"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
             <div class="sidebar-section">Agriculture</div>
             <li><a href="/forecast"><i class="fas fa-chart-line"></i> Forecast</a></li>
             <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
@@ -360,6 +446,18 @@
     </header>
 
     <div class="sensor-detail-container">
+        <!-- 4-Zone Grid Overview -->
+        <div class="zone-grid-section">
+            <h2><i class="fas fa-th-large"></i> Soil Moisture - 4 Zones</h2>
+            <p class="zone-summary" id="zoneSummary">Loading zone data...</p>
+            <div class="zone-grid" id="zoneGrid">
+                <div class="zone-card"><div class="loading"><i class="fas fa-spinner fa-spin"></i></div></div>
+                <div class="zone-card"><div class="loading"><i class="fas fa-spinner fa-spin"></i></div></div>
+                <div class="zone-card"><div class="loading"><i class="fas fa-spinner fa-spin"></i></div></div>
+                <div class="zone-card"><div class="loading"><i class="fas fa-spinner fa-spin"></i></div></div>
+            </div>
+        </div>
+
         <!-- Current Reading -->
         <div class="current-reading-card" id="currentReading">
             <h2>Current Soil Moisture</h2>
@@ -432,33 +530,117 @@
         let autoRefreshInterval;
 
         function refreshData() {
-            loadCurrentReading();
+            const zonesRequest = loadZoneGrid();
+            loadCurrentReading(zonesRequest);
             loadHistory(currentTimeRange);
         }
 
-        function loadCurrentReading() {
-            const container = document.getElementById('currentReading');
-            container.innerHTML = `
-                <h2>Current Soil Moisture</h2>
-                <div class="loading">
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <p>Loading sensor data...</p>
-                </div>
-            `;
-            fetch('/api/sensors/soil-moisture')
+        function loadZoneGrid() {
+            return fetch('/api/sensors/soil-moisture/arduino-zones', { cache: 'no-store' })
                 .then(response => response.json())
                 .then(data => {
-                    if (data.error) {
+                    renderZoneGrid(data);
+                    return data;
+                })
+                .catch(() => {
+                    renderZoneGridError();
+                    return { error: 'Unable to load sensor data.' };
+                });
+        }
+
+        function renderZoneGrid(data) {
+            const grid = document.getElementById('zoneGrid');
+            const summaryEl = document.getElementById('zoneSummary');
+
+            if (!data || !Array.isArray(data.zones) || data.zones.length === 0) {
+                renderZoneGridError();
+                return;
+            }
+
+            grid.innerHTML = data.zones.map(zone => {
+                if (!zone || typeof zone.value !== 'number' || !Number.isFinite(zone.value)) {
+                    return `
+                        <div class="zone-card disconnected">
+                            <div class="zone-icon"><i class="fas fa-plug"></i></div>
+                            <div class="zone-label">Zone ${zone?.zone ?? '?'}</div>
+                            <div class="zone-state">No Arduino data</div>
+                        </div>
+                    `;
+                }
+
+                if (zone.error) {
+                    return `
+                        <div class="zone-card disconnected">
+                            <div class="zone-icon"><i class="fas fa-plug"></i></div>
+                            <div class="zone-label">Zone ${zone.zone ?? '?'}</div>
+                            <div class="zone-pin">GPIO ${zone.gpio_pin ?? '-'}</div>
+                            <div class="zone-state">Not Connected</div>
+                        </div>
+                    `;
+                }
+
+                const zoneStatus = zone.value <= 30 ? 'dry' : zone.value <= 70 ? 'moist' : 'wet';
+                return `
+                    <div class="zone-card ${zoneStatus}">
+                        <div class="zone-icon"><i class="fas fa-${zoneStatus === 'dry' ? 'sun' : 'tint'}"></i></div>
+                        <div class="zone-label">Zone ${zone.zone}</div>
+                        <div class="zone-pin">${zone.sensor_mode === 'arduino_analog' ? `Arduino A${zone.zone - 1}` : 'Soil moisture'}</div>
+                        <div class="zone-state">${zone.value}% ${zoneStatus.toUpperCase()}</div>
+                        ${Number.isFinite(zone.raw_value) ? `<div class="zone-raw">Raw ADC: ${zone.raw_value}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            if (String(data.source || '').startsWith('simulated')) {
+                summaryEl.textContent = '';
+            } else if (data.source === 'recent_history') {
+                summaryEl.textContent = 'Recorded history: these readings are not live. Check current conditions before watering.';
+            } else if (data.summary) {
+                const s = data.summary;
+                summaryEl.textContent = `${s.valid_zones} zones · ${s.dry_zones} dry · ` +
+                    `Watering recommended: ${s.watering_recommended ? 'YES' : 'NO'}`;
+            } else {
+                summaryEl.textContent = '';
+            }
+        }
+
+        function renderZoneGridError() {
+            const grid = document.getElementById('zoneGrid');
+            const summaryEl = document.getElementById('zoneSummary');
+            grid.innerHTML = `
+                <div class="zone-card disconnected">
+                    <div class="zone-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                    <div class="zone-state">Unable to load zone data</div>
+                </div>
+            `;
+            summaryEl.textContent = '';
+        }
+
+        function loadCurrentReading(zonesRequest = null) {
+            const container = document.getElementById('currentReading');
+            const request = zonesRequest || fetch('/api/sensors/soil-moisture/arduino-zones', { cache: 'no-store' })
+                .then(response => response.json());
+            return request
+                .then(data => {
+                    const zones = (data.zones || []).filter(zone => zone && !zone.error && typeof zone.value === 'number' && Number.isFinite(zone.value));
+                    if (data.error || !zones.length) {
                         renderDisconnectedReading(container, data.error);
                         return;
                     }
 
-                    if (data.status === 'disconnected') {
-                        renderDisconnectedReading(container, data.error || 'Soil moisture sensor not connected.');
-                        return;
-                    }
-
-                    renderCurrentReading(container, data);
+                    const average = Number((zones.reduce((total, zone) => total + zone.value, 0) / zones.length).toFixed(1));
+                    const averageStatus = average <= 30 ? 'dry' : average <= 70 ? 'moist' : 'wet';
+                    renderCurrentReading(container, {
+                        value: average,
+                        unit: '%',
+                        status: averageStatus,
+                        state: averageStatus.toUpperCase(),
+                        sensor_mode: zones[0].sensor_mode,
+                        raw_value: zones.every(zone => Number.isFinite(zone.raw_value)) ? Math.round(
+                            zones.reduce((total, zone) => total + Number(zone.raw_value || 0), 0) / zones.length
+                        ) : undefined,
+                        recommendation: `Average across ${zones.length} zones`,
+                    });
                 })
                 .catch(() => {
                     renderDisconnectedReading(container, 'Unable to load sensor data.');
@@ -501,12 +683,12 @@
         }
 
         function renderCurrentReading(container, data, fromHistory = false) {
-            const statusClass = data.status === 'optimal' ? 'status-optimal' : 
+            const statusClass = data.status === 'optimal' || data.status === 'moist' ? 'status-optimal' : 
                                data.status === 'dry' ? 'status-danger' : 'status-warning';
             const isDigitalDO = data.sensor_mode === 'digital_do' || data.unit === 'DO';
             const statusText = isDigitalDO
                 ? `${data.state || (data.value === 0 ? 'WET' : 'DRY')} (DO=${data.raw_value ?? data.value})`
-                : (data.status === 'optimal' ? 'OPTIMAL' : data.status === 'dry' ? 'TOO DRY' : 'TOO WET');
+                : (data.status === 'optimal' || data.status === 'moist' ? 'MOIST' : data.status === 'dry' ? 'TOO DRY' : 'TOO WET');
             const displayValue = isDigitalDO
                 ? `${data.state || (data.value === 0 ? 'WET' : 'DRY')}`
                 : `${data.value}<span class="reading-unit-large">${data.unit || ''}</span>`;
@@ -521,7 +703,7 @@
                     ${displayValue}
                 </div>
                 <div class="status-indicator ${statusClass}">
-                    <i class="fas fa-${data.status === 'optimal' ? 'check-circle' : 'exclamation-triangle'}"></i>
+                    <i class="fas fa-${data.status === 'optimal' || data.status === 'moist' ? 'check-circle' : 'exclamation-triangle'}"></i>
                     ${statusText}
                 </div>
                 ${sourceInfo}

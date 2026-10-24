@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
     <title>Water Pump - AgriPinya</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -48,23 +49,15 @@
             margin-top: 10px;
         }
 
-        .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 18px;
-            border-radius: 999px;
-            font-weight: 700;
+        #btnOff.btn-danger,
+        #btnAutoOff.btn-danger {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
         }
 
-        .status-on {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .status-off {
-            background: #f8d7da;
-            color: #721c24;
+        #btnOff.btn-danger:hover,
+        #btnAutoOff.btn-danger:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(220, 38, 38, 0.4);
         }
 
         .status-meta {
@@ -303,10 +296,11 @@
             max-width: 100% !important;
         }
     </style>
+    <script src="{{ url_for('static', filename='js/html-utils.js') }}"></script>
 </head>
 <body>
     <!-- Sidebar Toggle Button (Mobile) -->
-    <button class="sidebar-toggle" onclick="toggleSidebar()">
+    <button class="sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false" onclick="toggleSidebar()">
         <i class="fas fa-bars"></i>
     </button>
 
@@ -317,19 +311,12 @@
                 <i class="fas fa-leaf"></i>
                 <span data-i18n="brand">AgriPinya</span>
             </a>
-            <div class="language-selector">
-                <select id="languageSelect" onchange="changeLanguage()">
-                    <option value="en">English</option>
-                    <option value="tl">Tagalog</option>
-                    <option value="es">Español</option>
-                </select>
-            </div>
         </div>
         <ul class="sidebar-menu">
             <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
             <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
             <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
-            <li><a href="/sensors/water-pump" class="active"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <li><a href="/sensors/water-pump" class="active"><i class="fas fa-faucet"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
             <div class="sidebar-section">Agriculture</div>
             <li><a href="/forecast"><i class="fas fa-chart-line"></i> Forecast</a></li>
             <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
@@ -342,7 +329,7 @@
     <div class="main-wrapper">
         <header class="hero" style="padding: 2rem 0;">
             <div class="container">
-                <h1 data-i18n="water_pump_title"><i class="fas fa-faucet-drip"></i> Water Pump</h1>
+                <h1 data-i18n="water_pump_title"><i class="fas fa-faucet"></i> Water Pump</h1>
                 <p data-i18n="water_pump_subtitle">Turn irrigation pump on or off</p>
             </div>
         </header>
@@ -350,28 +337,14 @@
         <div class="pump-container">
             <div class="pump-row">
             <div class="pump-card">
-                <h2 data-i18n="pump_status">Pump Status</h2>
-
-                <div class="pump-status">
-                    <div id="statusPill" class="status-pill status-off">
-                        <i class="fas fa-power-off"></i>
-                        <span id="statusText">OFF</span>
-                    </div>
-                    <div class="status-meta" id="statusMeta">--</div>
-                </div>
+                <h2><i class="fas fa-faucet"></i> <span data-i18n="pump_status">Pump Status</span></h2>
 
                 <div class="controls">
-                    <button class="btn btn-success" id="btnOn" onclick="pumpOn()">
+                    <button class="btn btn-secondary" id="btnOn" onclick="pumpOn()" aria-pressed="false" disabled>
                         <i class="fas fa-toggle-on"></i> <span data-i18n="pump_on">ON</span>
                     </button>
-                    <button class="btn btn-secondary" id="btnOff" onclick="pumpOff()">
+                    <button class="btn btn-secondary" id="btnOff" onclick="pumpOff()" aria-pressed="false" disabled>
                         <i class="fas fa-toggle-off"></i> <span data-i18n="pump_off">OFF</span>
-                    </button>
-                    <button class="btn btn-primary" id="btnRun" onclick="pumpRun()">
-                        <i class="fas fa-stopwatch"></i> <span data-i18n="run_pump">Run 2s</span>
-                    </button>
-                    <button class="btn btn-secondary" id="btnRefresh" onclick="refreshStatus()">
-                        <i class="fas fa-sync"></i> <span data-i18n="refresh">Refresh</span>
                     </button>
                 </div>
 
@@ -383,18 +356,14 @@
                 <p style="color: #666; margin-bottom: 16px;">Automatically waters the plant once soil moisture stays dry.</p>
 
                 <div class="pump-status">
-                    <div id="autoStatusPill" class="status-pill status-off">
-                        <i class="fas fa-power-off"></i>
-                        <span id="autoStatusText">OFF</span>
-                    </div>
                     <div class="status-meta" id="autoStatusMeta">--</div>
                 </div>
 
                 <div class="controls">
-                    <button class="btn btn-success" id="btnAutoOn" onclick="toggleAutoPump(true)">
+                    <button class="btn btn-secondary" id="btnAutoOn" onclick="toggleAutoPump(true)" aria-pressed="false">
                         <i class="fas fa-toggle-on"></i> Enable Auto
                     </button>
-                    <button class="btn btn-secondary" id="btnAutoOff" onclick="toggleAutoPump(false)">
+                    <button class="btn btn-secondary" id="btnAutoOff" onclick="toggleAutoPump(false)" aria-pressed="false">
                         <i class="fas fa-toggle-off"></i> Disable Auto
                     </button>
                 </div>
@@ -427,7 +396,7 @@
                         </div>
                         <div class="field-group">
                             <label for="scheduleDuration">Duration (seconds)</label>
-                            <input id="scheduleDuration" type="number" min="1" value="5">
+                            <input id="scheduleDuration" type="number" min="1" max="{{ pump_max_seconds|default(300) }}" value="5">
                         </div>
                         <div class="field-group full-width">
                             <label for="scheduleDays">Days of week</label>
@@ -504,11 +473,17 @@
     <script>
         let refreshTimer;
         let autoPumpEnabled = false;
+        let pumpHardwareAvailable = false;
+        let pumpControlsBusy = false;
+        let statusRequest = null;
+        let pumpStatusRevision = 0;
 
         function setBusy(isBusy) {
-            ['btnOn', 'btnOff', 'btnRun', 'btnRefresh', 'btnCreateSchedule', 'btnPredictGrowth', 'btnAutoOn', 'btnAutoOff'].forEach(id => {
+            pumpControlsBusy = isBusy;
+            ['btnOn', 'btnOff', 'btnCreateSchedule', 'btnPredictGrowth', 'btnAutoOn', 'btnAutoOff'].forEach(id => {
                 const btn = document.getElementById(id);
-                if (btn) btn.disabled = isBusy;
+                const needsHardware = ['btnOn', 'btnOff', 'btnCreateSchedule', 'btnAutoOn'].includes(id);
+                if (btn) btn.disabled = isBusy || (needsHardware && !pumpHardwareAvailable);
             });
         }
 
@@ -613,7 +588,7 @@
                 return `
                     <div class="schedule-item">
                         <div>
-                            <h4>${schedule.name || 'Scheduled watering'}</h4>
+                            <h4>${escapeHtml(schedule.name || 'Scheduled watering')}</h4>
                             <div class="schedule-meta">
                                 <div><strong>Time:</strong> ${schedule.time || '--'} | <strong>Duration:</strong> ${schedule.duration_seconds || '--'}s</div>
                                 <div><strong>Days:</strong> ${dayLabel}</div>
@@ -1025,39 +1000,59 @@
         }
 
         function renderStatus(data) {
-            const pill = document.getElementById('statusPill');
-            const statusText = document.getElementById('statusText');
-            const meta = document.getElementById('statusMeta');
+            pumpHardwareAvailable = data.hardware_available !== false;
+            if (!pumpHardwareAvailable) showError(data.hardware_message || 'Pump controller unavailable.');
 
-            const i18nText = (key, fallback) => {
-                const el = document.querySelector(`[data-i18n="${key}"]`);
-                const text = el ? (el.textContent || '').trim() : '';
-                return text || fallback;
-            };
+            [['btnOn', 'on', 'btn-success'], ['btnOff', 'off', 'btn-danger']].forEach(([id, state, activeClass]) => {
+                const button = document.getElementById(id);
+                const active = pumpHardwareAvailable && data.status === state;
+                if (button) {
+                    button.className = `btn ${active ? activeClass : 'btn-secondary'}`;
+                    button.setAttribute('aria-pressed', String(active));
+                }
+            });
+        }
 
-            const isOn = (data && data.status === 'on');
-            if (pill) {
-                pill.classList.toggle('status-on', isOn);
-                pill.classList.toggle('status-off', !isOn);
+        async function refreshStatus(background = false) {
+            if (background && (pumpControlsBusy || statusRequest)) return;
+            if (statusRequest) await statusRequest;
+            if (!background) {
+                setBusy(true);
+                showError('');
             }
-            if (statusText) {
-                statusText.textContent = isOn ? i18nText('pump_on', 'ON') : i18nText('pump_off', 'OFF');
-            }
-            if (meta) {
-                const gpio = data && data.gpio_pin != null ? `GPIO ${data.gpio_pin}` : 'GPIO --';
-                const breaker = data && data.breaker_on ? 'Breaker: ON' : 'Breaker: OFF';
-                meta.textContent = `${gpio} • ${breaker}`;
+            const revision = pumpStatusRevision;
+            statusRequest = (async () => {
+                try {
+                    const res = await fetch('/api/water-pump/status');
+                    const data = await res.json();
+                    if (!res.ok || data.error) {
+                        throw new Error(data.error || 'Failed to load status');
+                    }
+                    if (revision === pumpStatusRevision && (!background || !pumpControlsBusy)) renderStatus(data);
+                } catch (e) {
+                    if (revision === pumpStatusRevision && (!background || !pumpControlsBusy)) {
+                        renderStatus({ hardware_available: false, hardware_message: e.message });
+                    }
+                } finally {
+                    if (revision === pumpStatusRevision && (!background || !pumpControlsBusy)) setBusy(false);
+                }
+            })();
+            try {
+                await statusRequest;
+            } finally {
+                statusRequest = null;
             }
         }
 
-        async function refreshStatus() {
+        async function pumpOn() {
+            pumpStatusRevision++;
             setBusy(true);
             showError('');
             try {
-                const res = await fetch('/api/water-pump/status');
+                const res = await fetch('/api/water-pump/on', { method: 'POST' });
                 const data = await res.json();
                 if (!res.ok || data.error) {
-                    throw new Error(data.error || 'Failed to load status');
+                    throw new Error(data.error || 'Failed to turn pump on');
                 }
                 renderStatus(data);
             } catch (e) {
@@ -1067,24 +1062,8 @@
             }
         }
 
-        async function pumpOn() {
-            setBusy(true);
-            showError('');
-            try {
-                const res = await fetch('/api/water-pump/on', { method: 'POST' });
-                const data = await res.json();
-                if (!res.ok || data.error) {
-                    throw new Error(data.error || 'Failed to turn pump on');
-                }
-                await refreshStatus();
-            } catch (e) {
-                showError(e.message);
-            } finally {
-                setBusy(false);
-            }
-        }
-
         async function pumpOff() {
+            pumpStatusRevision++;
             setBusy(true);
             showError('');
             try {
@@ -1093,28 +1072,7 @@
                 if (!res.ok || data.error) {
                     throw new Error(data.error || 'Failed to turn pump off');
                 }
-                await refreshStatus();
-            } catch (e) {
-                showError(e.message);
-            } finally {
-                setBusy(false);
-            }
-        }
-
-        async function pumpRun() {
-            setBusy(true);
-            showError('');
-            try {
-                const res = await fetch('/api/water-pump/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ duration_seconds: 2 })
-                });
-                const data = await res.json();
-                if (!res.ok || data.error) {
-                    throw new Error(data.error || 'Failed to run pump');
-                }
-                await refreshStatus();
+                renderStatus(data);
             } catch (e) {
                 showError(e.message);
             } finally {
@@ -1123,30 +1081,26 @@
         }
 
         function renderAutoStatus(data) {
-            const pill = document.getElementById('autoStatusPill');
-            const text = document.getElementById('autoStatusText');
             const meta = document.getElementById('autoStatusMeta');
-            if (!pill || !text || !meta) return;
 
             const enabled = !!data.enabled;
             const autoStateChanged = autoPumpEnabled !== enabled;
             autoPumpEnabled = enabled;
-            pill.className = `status-pill ${enabled ? 'status-on' : 'status-off'}`;
-            text.textContent = enabled ? 'AUTO ON' : 'AUTO OFF';
+            [['btnAutoOn', enabled, 'btn-success'], ['btnAutoOff', !enabled, 'btn-danger']].forEach(([id, active, activeClass]) => {
+                const button = document.getElementById(id);
+                if (button) {
+                    button.className = `btn ${active ? activeClass : 'btn-secondary'}`;
+                    button.setAttribute('aria-pressed', String(active));
+                }
+            });
             if (autoStateChanged) {
                 loadSchedules();
             }
 
-            if (!enabled) {
-                meta.textContent = 'Automatic watering is off.';
-                return;
+            if (meta) {
+                meta.hidden = enabled;
+                meta.textContent = enabled ? '' : 'Automatic watering is off.';
             }
-
-            const soil = data.last_seen_status ? data.last_seen_status.toUpperCase() : 'unknown';
-            const dry = data.consecutive_dry || 0;
-            const needed = data.dry_confirmations || 2;
-            const lastRun = data.last_run_at ? formatDateTime(data.last_run_at) : 'never';
-            meta.textContent = `Soil: ${soil} • Dry checks: ${dry}/${needed} • Last auto-run: ${lastRun}`;
         }
 
         async function loadAutoStatus() {
@@ -1175,7 +1129,7 @@
                 if (!res.ok || data.error) {
                     throw new Error(data.error || 'Failed to update automatic watering');
                 }
-                await loadAutoStatus();
+                renderAutoStatus(data);
             } catch (e) {
                 showSectionError('autoErrorBox', e.message);
             } finally {
@@ -1186,7 +1140,7 @@
         function startAutoRefresh() {
             stopAutoRefresh();
             refreshTimer = setInterval(() => {
-                refreshStatus();
+                refreshStatus(true);
                 loadAutoStatus();
             }, 5000);
         }
@@ -1230,12 +1184,21 @@
             if (!sidebar) return;
 
             const backdrop = ensureSidebarBackdrop();
-            const isOpen = sidebar.classList.toggle('open');
+            const isOpen = !sidebar.classList.contains('mobile-open');
+            sidebar.classList.toggle('mobile-open', isOpen);
+            document.body.classList.toggle('mobile-nav-open', isOpen);
+
+            const toggle = document.querySelector('.sidebar-toggle');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', String(isOpen));
+            }
 
             if (backdrop) {
                 backdrop.classList.toggle('show', isOpen);
                 backdrop.onclick = () => {
-                    sidebar.classList.remove('open');
+                    sidebar.classList.remove('mobile-open');
+                    document.body.classList.remove('mobile-nav-open');
+                    if (toggle) toggle.setAttribute('aria-expanded', 'false');
                     backdrop.classList.remove('show');
                 };
             }

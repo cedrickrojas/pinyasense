@@ -16,6 +16,7 @@ def get_email_config():
         'port': int(os.getenv('MAIL_PORT', 587)),
         'username': os.getenv('MAIL_USERNAME'),
         'password': os.getenv('MAIL_PASSWORD'),
+        'base_url': os.getenv('APP_BASE_URL', 'https://xn--piasense-e3a.tech').rstrip('/'),
         'from_email': os.getenv('MAIL_FROM', os.getenv('MAIL_USERNAME', 'noreply@agripinya.com'))
     }
 
@@ -25,7 +26,7 @@ def send_reset_code_email(to_email, reset_code):
     
     # Check if email is configured
     if not all([config['server'], config['username'], config['password']]):
-        print("✗ Email configuration is incomplete. Reset code was generated but not sent.")
+        print("Password reset was not sent: SMTP is not configured.")
         return False
     
     try:
@@ -109,7 +110,7 @@ def send_reset_code_email(to_email, reset_code):
         msg.attach(MIMEText(html_body, 'html'))
         
         # Send email
-        with smtplib.SMTP(config['server'], config['port']) as server:
+        with smtplib.SMTP(config['server'], config['port'], timeout=15) as server:
             server.starttls()  # Secure connection
             server.login(config['username'], config['password'])
             server.sendmail(config['from_email'], to_email, msg.as_string())
@@ -126,8 +127,8 @@ def send_welcome_email(to_email, fullname):
     config = get_email_config()
     
     if not all([config['server'], config['username'], config['password']]):
-        print(f"✓ Welcome email would be sent to {to_email} (email not configured)")
-        return True
+        print("Email was not sent: SMTP is not configured.")
+        return False
     
     try:
         subject = "🍍 Welcome to AgriPinya!"
@@ -165,7 +166,7 @@ def send_welcome_email(to_email, fullname):
                     </ul>
                     
                     <p style="text-align: center;">
-                        <a href="https://agripinya.com/dashboard" class="button">Get Started Now</a>
+                        <a href="{config['base_url']}/dashboard" class="button">Get Started Now</a>
                     </p>
                     
                     <p>If you have any questions, feel free to contact our support team.</p>
@@ -185,7 +186,7 @@ def send_welcome_email(to_email, fullname):
         
         msg.attach(MIMEText(html_body, 'html'))
         
-        with smtplib.SMTP(config['server'], config['port']) as server:
+        with smtplib.SMTP(config['server'], config['port'], timeout=15) as server:
             server.starttls()
             server.login(config['username'], config['password'])
             server.sendmail(config['from_email'], to_email, msg.as_string())
@@ -203,8 +204,8 @@ def send_email_notification(to_email, fullname, notification_message):
     
     # Check if email is configured
     if not all([config['server'], config['username'], config['password']]):
-        print(f"✓ Email notification would be sent to {to_email} (email not configured)")
-        return True
+        print("Email was not sent: SMTP is not configured.")
+        return False
     
     try:
         subject = "🚨 AgriPinya - Soil Moisture Alert"
@@ -279,7 +280,7 @@ def send_email_notification(to_email, fullname, notification_message):
         msg.attach(MIMEText(text_body, 'plain'))
         msg.attach(MIMEText(html_body, 'html'))
         
-        with smtplib.SMTP(config['server'], config['port']) as server:
+        with smtplib.SMTP(config['server'], config['port'], timeout=15) as server:
             server.starttls()
             server.login(config['username'], config['password'])
             server.sendmail(config['from_email'], to_email, msg.as_string())
@@ -294,12 +295,12 @@ def send_email_notification(to_email, fullname, notification_message):
 
 def send_report_email(to_email, subject, body_text, attachments=None):
     """Send an email with optional attachments (attachments: dict of filename->bytes).
-    Returns True if sent or simulated when email not configured.
+    Returns True only when SMTP accepted the message.
     """
     config = get_email_config()
     if not all([config['server'], config['username'], config['password']]):
-        print(f"✓ Report email would be sent to {to_email} (email not configured)")
-        return True
+        print("Email was not sent: SMTP is not configured.")
+        return False
 
     try:
         msg = MIMEMultipart()
@@ -323,7 +324,7 @@ def send_report_email(to_email, subject, body_text, attachments=None):
                 part.add_header('Content-Disposition', f'attachment; filename="{fname}"')
                 msg.attach(part)
 
-        with smtplib.SMTP(config['server'], config['port']) as server:
+        with smtplib.SMTP(config['server'], config['port'], timeout=15) as server:
             server.starttls()
             server.login(config['username'], config['password'])
             server.sendmail(config['from_email'], to_email, msg.as_string())

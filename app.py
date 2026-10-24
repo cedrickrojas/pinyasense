@@ -1,9 +1,12 @@
-from flask import Flask, render_template, request, jsonify, make_response, send_from_directory
+from flask import Flask, render_template, request, jsonify, make_response, send_from_directory, redirect
 from flask_cors import CORS
 import os
 from werkzeug.utils import secure_filename
 import cv2
 import numpy as np
+import math
+import tempfile
+import hmac
 from datetime import datetime, timedelta
 from uuid import uuid4
 from typing import Dict, List
@@ -23,7 +26,22 @@ import json
 from core.disease_detector import PineappleDiseaseDetector
 from core.sensor_monitor import sensor_monitor
 from core.time_series_forecaster import growth_forecaster
-from core.auth import register_user, verify_login, verify_session, get_user_info, invalidate_session, update_user_fullname, generate_reset_code, verify_reset_code, reset_password
+from core.soil_preview import preview_zones, preview_history
+from core.detection_records import detection_datetime, load_local_results, save_local_result
+from core.json_storage import write_json_atomic
+from core.pump_remote import create_pump_bridge, proxy_pump_request
+from core.plant_monitoring import (
+    PlantMonitoringStore,
+    ProblemRecommender,
+    MonitoringStoreUnavailable,
+    STORE_UNAVAILABLE_MESSAGE,
+    ValidationError as MonitoringValidationError,
+    monitoring_options,
+    validate_problem_status,
+    validate_problem_submission,
+    validate_status_submission,
+)
+from core.auth import register_user, create_super_admin, verify_login, verify_session, get_user_info, invalidate_session, update_user_fullname, generate_reset_code, verify_reset_code, reset_password, list_staff_accounts, update_staff_account_status, load_users
 from core.email_service import send_reset_code_email, send_welcome_email
 from functools import wraps
 import firebase_admin
@@ -43,10 +61,41 @@ except ImportError:
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 CORS(app)
+app.register_blueprint(create_pump_bridge(sensor_monitor))
+
+
+@app.before_request
+def validate_api_request():
+    """Reject malformed request bodies before broad route error handlers run."""
+    if request.content_length and request.content_length > app.config['MAX_CONTENT_LENGTH']:
+        return jsonify({'error': 'Upload exceeds the 200 MB limit.'}), 413
+    if request.path.startswith('/api/'):
+        for key, maximum in (('limit', 1000), ('hours', 168), ('days', 3650)):
+            if key in request.args:
+                try:
+                    value = int(request.args[key])
+                    if not 1 <= value <= maximum:
+                        raise ValueError()
+                except ValueError:
+                    return jsonify({'error': f'{key} must be an integer between 1 and {maximum}.'}), 400
+    if request.path.startswith('/api/') and request.method in {'POST', 'PUT', 'PATCH'}:
+        if request.is_json:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({'error': 'Expected a JSON object.'}), 400
+            for key in ('fullname', 'email', 'password', 'confirmPassword', 'phone', 'code',
+                        'new_password', 'confirm_password', 'title', 'content', 'type', 'status', 'message'):
+                if key in data and not isinstance(data[key], str):
+                    return jsonify({'error': f'{key} must be text.'}), 400
+        json_paths = {'/api/signup', '/api/login', '/api/forgot-password', '/api/reset-password',
+                      '/api/profile', '/api/admin/super-admins', '/api/reports', '/api/notifications'}
+        if request.path in json_paths and not request.is_json:
+            return jsonify({'error': 'Expected an application/json request.'}), 400
 
 # Configuration
-UPLOAD_FOLDER = 'uploads'
-RESULTS_FOLDER = 'results'
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(PROJECT_ROOT, 'uploads')
+RESULTS_FOLDER = os.path.join(PROJECT_ROOT, 'results')
 ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm'}
 ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS
@@ -60,7 +109,7 @@ scheduler = None
 # Create necessary directories
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
-os.makedirs('static/images', exist_ok=True)
+os.makedirs(os.path.join(PROJECT_ROOT, 'static', 'images'), exist_ok=True)
 
 # Initialize disease detector
 MODEL_PATH = os.getenv('PINEAPPLE_MODEL_PATH') or os.getenv('MODEL_PATH')
@@ -71,6 +120,7 @@ detector = PineappleDiseaseDetector(model_path=MODEL_PATH)
 FIREBASE_SERVICE_ACCOUNT_KEY = os.getenv('FIREBASE_SERVICE_ACCOUNT_KEY')
 FIREBASE_KEY_CANDIDATES = [
     FIREBASE_SERVICE_ACCOUNT_KEY,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'serviceAccountKey.json'),
     'serviceAccountKey.json',
 ]
 firestore_db = None
@@ -105,6 +155,37 @@ def firestore_ready() -> bool:
     return firestore_db is not None
 
 
+def sync_user_firestore(email, deleted=False):
+    """Mirror account metadata to Firestore without storing password data."""
+    if not firestore_ready() or not email:
+        return False
+
+    document_id = (
+        email.strip().lower()
+        .replace('.', '_').replace('#', '_').replace('$', '_')
+        .replace('[', '_').replace(']', '_').replace('/', '_')
+    )
+    reference = firestore_db.collection('users').document(document_id)
+    if deleted:
+        reference.delete()
+        return True
+
+    user = load_users().get(email.strip().lower())
+    if not user:
+        return False
+    reference.set({
+        'email': user.get('email', email).lower(),
+        'fullname': user.get('fullname', 'User'),
+        'phone': user.get('phone', ''),
+        'role': user.get('role', 'staff'),
+        'status': user.get('status', 'pending'),
+        'created_at': user.get('created_at'),
+        'last_login': user.get('last_login'),
+        'updated_at': datetime.now().isoformat(),
+    }, merge=True)
+    return True
+
+
 def _collection_query(collection_name, user_id=None):
     """Build a Firestore query for a top-level collection."""
     query = firestore_db.collection(collection_name)
@@ -127,47 +208,45 @@ def save_detection_result_firestore(result, user_id=None):
         'media_path': result.get('media_path'),
         'farm': result.get('farm'),
         'user_id': user_id,
+        'record_id': result.get('record_id'),
+        'image_path': result.get('image_path'),
+        'method': result.get('method'),
     }
-    firestore_db.collection('disease_results').document(str(timestamp)).set(data)
+    firestore_db.collection('disease_results').document(result.get('record_id') or str(timestamp)).set(data, retry=None, timeout=8)
     return True
 
 
-def get_detection_results_firestore(user_id=None, limit=50):
+def get_detection_results_firestore(user_id=None, limit=50, timeout=8):
     if not firestore_ready():
         return []
 
     query = firestore_db.collection('disease_results')
-    if user_id:
+    if user_id is not None:
         # Filtering by user_id and ordering by timestamp together requires a
         # composite index. Avoid that by sorting client-side instead.
         query = query.where('user_id', '==', user_id)
     else:
-        query = query.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+        query = query.order_by('timestamp', direction=firestore.Query.DESCENDING)
+        if limit is not None:
+            query = query.limit(limit)
 
-    docs = query.stream()
+    stream_options = {'retry': None, 'timeout': timeout} if timeout is not None else {}
+    docs = query.stream(**stream_options)
     results = []
     for doc in docs:
         item = doc.to_dict() or {}
         item['id'] = doc.id
         results.append(item)
 
-    if user_id:
-        results.sort(key=lambda r: r.get('timestamp', ''), reverse=True)
+    if user_id is not None:
+        results.sort(key=lambda r: detection_datetime(r.get('timestamp')) or datetime.min, reverse=True)
         results = results[:limit]
 
     return results
 
 
 def _parse_report_date(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        try:
-            return datetime.strptime(value, '%Y-%m-%d')
-        except ValueError:
-            return None
+    return detection_datetime(value)
 
 
 def _normalize_report_filters(start_date=None, end_date=None, farm=None, sensor_type=None, media_type=None):
@@ -194,9 +273,11 @@ def _filter_detection_results(results, filters):
     filtered = []
     for result in results:
         timestamp = _parse_report_date(result.get('timestamp'))
+        if not timestamp and (filters.get('start_date') or filters.get('end_date')):
+            continue
         if filters.get('start_date') and timestamp and timestamp < filters['start_date']:
             continue
-        if filters.get('end_date') and timestamp and timestamp > filters['end_date'] + timedelta(days=1):
+        if filters.get('end_date') and timestamp and timestamp >= filters['end_date'] + timedelta(days=1):
             continue
 
         if filters.get('farm'):
@@ -217,9 +298,11 @@ def _filter_sensor_results(results, filters):
     filtered = []
     for result in results:
         timestamp = _parse_report_date(result.get('timestamp'))
+        if not timestamp and (filters.get('start_date') or filters.get('end_date')):
+            continue
         if filters.get('start_date') and timestamp and timestamp < filters['start_date']:
             continue
-        if filters.get('end_date') and timestamp and timestamp > filters['end_date'] + timedelta(days=1):
+        if filters.get('end_date') and timestamp and timestamp >= filters['end_date'] + timedelta(days=1):
             continue
 
         if filters.get('sensor_type'):
@@ -231,28 +314,6 @@ def _filter_sensor_results(results, filters):
     return filtered
 
 
-def aggregate_statistics_firestore(user_id=None):
-    results = get_detection_results_firestore(user_id=user_id, limit=1000)
-    if not results:
-        return {
-            'total_detections': 0,
-            'disease_counts': {},
-            'avg_confidence': 0,
-        }
-
-    disease_counts = {}
-    total_confidence = 0
-    for result in results:
-        disease = result.get('disease', 'Unknown')
-        disease_counts[disease] = disease_counts.get(disease, 0) + 1
-        total_confidence += result.get('confidence', 0) or 0
-
-    return {
-        'total_detections': len(results),
-        'disease_counts': disease_counts,
-        'avg_confidence': round(total_confidence / len(results), 4),
-        'last_updated': datetime.now().isoformat(),
-    }
 
 
 def save_sensor_data_firestore(sensor_type, data, user_id=None):
@@ -265,11 +326,11 @@ def save_sensor_data_firestore(sensor_type, data, user_id=None):
         'timestamp': data.get('timestamp', datetime.now().isoformat()),
         'data': data,
     }
-    firestore_db.collection('sensor_data').add(payload)
+    firestore_db.collection('sensor_data').add(payload, retry=None, timeout=8)
     return True
 
 
-def get_sensor_data_firestore(sensor_type, user_id=None, limit=100):
+def get_sensor_data_firestore(sensor_type, user_id=None, limit=100, timeout=None):
     if not firestore_ready():
         return []
 
@@ -280,7 +341,8 @@ def get_sensor_data_firestore(sensor_type, user_id=None, limit=100):
         query = query.where('user_id', '==', user_id)
 
     readings = []
-    for doc in query.stream():
+    stream_options = {'retry': None, 'timeout': timeout} if timeout is not None else {}
+    for doc in query.stream(**stream_options):
         item = doc.to_dict() or {}
         item['id'] = doc.id
         readings.append(item)
@@ -289,11 +351,52 @@ def get_sensor_data_firestore(sensor_type, user_id=None, limit=100):
     return readings[:limit]
 
 
+def _load_forecast_sensor_rows(history_days=90):
+    """Load the current user's real digital DO readings from Firestore."""
+    if not firestore_ready():
+        return [], 'Firestore is unavailable, so actual sensor readings could not be loaded.'
+
+    current_email = verify_session(request.cookies.get('session_token'))
+    allowed_users = {None, get_current_firebase_user_id(), current_email}
+    sensor_types = [
+        'soil_moisture',
+        'soil_moisture_zone1',
+        'soil_moisture_zone2',
+        'soil_moisture_zone3',
+        'soil_moisture_zone4',
+        'temp_humidity',
+        'temperature_humidity',
+    ]
+    rows = []
+    reading_limit = max(500, min(10000, int(history_days) * 4 * 24))
+    try:
+        for sensor_type in sensor_types:
+            readings = get_sensor_data_firestore(sensor_type, limit=reading_limit, timeout=8)
+            for record in readings:
+                if record.get('user_id') not in allowed_users:
+                    continue
+
+                reading = dict(record)
+                nested_data = record.get('data')
+                if isinstance(nested_data, dict):
+                    reading.update(nested_data)
+                reading['sensor_type'] = record.get('sensor_type') or sensor_type
+                reading['user_id'] = record.get('user_id')
+                if str(reading.get('data_source', '')).strip().lower() == 'simulated_daily':
+                    continue
+                rows.append(reading)
+    except Exception as error:
+        print(f'⚠️  Unable to load forecast sensor history from Firestore: {error}')
+        return [], 'Firestore sensor history could not be loaded.'
+
+    return rows, None
+
+
 def save_report_firestore(report, user_id=None):
     if not firestore_ready():
         return False
 
-    report_id = report.get('id') or datetime.now().strftime('%Y%m%d_%H%M%S')
+    report_id = report.get('id') or uuid4().hex
     data = {
         'id': report_id,
         'title': report.get('title', ''),
@@ -305,31 +408,37 @@ def save_report_firestore(report, user_id=None):
         'created_at': report.get('created_at', datetime.now().isoformat()),
         'updated_at': datetime.now().isoformat(),
     }
-    firestore_db.collection('reports').document(report_id).set(data)
+    firestore_db.collection('reports').document(report_id).set(data, retry=None, timeout=8)
     return True
 
 
-def get_reports_firestore(user_id=None, limit=50):
+def _list_user_documents(collection, user_id=None, limit=50):
+    """Avoid a compound-index requirement while preserving per-user isolation."""
     if not firestore_ready():
         return []
-
-    query = firestore_db.collection('reports').order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit)
-    if user_id:
+    query = firestore_db.collection(collection)
+    if user_id is not None:
         query = query.where('user_id', '==', user_id)
+    else:
+        query = query.order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit)
+    rows = []
+    for document in query.stream(retry=None, timeout=8):
+        row = document.to_dict() or {}
+        row['id'] = document.id
+        rows.append(row)
+    rows.sort(key=lambda row: detection_datetime(row.get('created_at')) or datetime.min, reverse=True)
+    return rows[:limit]
 
-    reports = []
-    for doc in query.stream():
-        item = doc.to_dict() or {}
-        item['id'] = doc.id
-        reports.append(item)
-    return reports
+
+def get_reports_firestore(user_id=None, limit=50):
+    return _list_user_documents('reports', user_id, limit)
 
 
 def save_notification_firestore(notification, user_id=None):
     if not firestore_ready():
         return False
 
-    notification_id = notification.get('id') or datetime.now().strftime('%Y%m%d_%H%M%S')
+    notification_id = notification.get('id') or uuid4().hex
     data = {
         'id': notification_id,
         'title': notification.get('title', ''),
@@ -339,31 +448,22 @@ def save_notification_firestore(notification, user_id=None):
         'user_id': user_id,
         'created_at': notification.get('created_at', datetime.now().isoformat()),
     }
-    firestore_db.collection('notifications').document(notification_id).set(data)
+    firestore_db.collection('notifications').document(notification_id).set(data, retry=None, timeout=8)
     return True
 
 
 def get_notifications_firestore(user_id=None, limit=50):
-    if not firestore_ready():
-        return []
-
-    query = firestore_db.collection('notifications').order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit)
-    if user_id:
-        query = query.where('user_id', '==', user_id)
-
-    notifications = []
-    for doc in query.stream():
-        item = doc.to_dict() or {}
-        item['id'] = doc.id
-        notifications.append(item)
-    return notifications
+    return _list_user_documents('notifications', user_id, limit)
 
 
-def mark_notification_read_firestore(notification_id):
-    if not firestore_ready():
+def mark_notification_read_firestore(notification_id, user_id=None):
+    if not firestore_ready() or not notification_id or '/' in notification_id:
         return False
-
-    firestore_db.collection('notifications').document(notification_id).set({'read': True}, merge=True)
+    reference = firestore_db.collection('notifications').document(notification_id)
+    snapshot = reference.get(retry=None, timeout=8)
+    if not snapshot.exists or (snapshot.to_dict() or {}).get('user_id') != user_id:
+        return False
+    reference.update({'read': True}, retry=None, timeout=8)
     return True
 
 
@@ -389,21 +489,135 @@ def get_current_firebase_user_id():
     return to_firebase_user_id(email)
 
 
-@app.route("/save_sensor")
+def _detection_user_id():
+    """Admins review the farm's records; staff see only their own uploads."""
+    user = getattr(request, 'current_user', None)
+    if user and user.get('role') in {'admin', 'super_admin'}:
+        return None
+    return get_current_firebase_user_id()
+
+
+def _read_detection_results(user_id=None, limit=1000):
+    local = load_local_results(app.config['RESULTS_FOLDER'], user_id=user_id)
+    cloud = []
+    if firestore_ready():
+        try:
+            cloud = get_detection_results_firestore(user_id=user_id, limit=limit, timeout=5)
+        except Exception as error:
+            app.logger.warning('Cloud detection read failed (%s); using local records.', type(error).__name__)
+    source = 'firestore' if cloud else 'local'
+    if cloud:
+        known = {row.get('record_id') or row.get('id') for row in cloud}
+        pending = [row for row in local if row.get('cloud_saved') is False
+                   and row.get('record_id') not in known]
+        rows = cloud + pending
+        if pending:
+            source = 'mixed'
+    else:
+        rows = local
+    rows.sort(key=lambda row: detection_datetime(row.get('timestamp')) or datetime.min, reverse=True)
+    return rows[:limit], source
+
+
+def _persist_detection_result(result):
+    """Preserve successful analysis locally before attempting the cloud write."""
+    result['record_id'] = datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_' + uuid4().hex[:8]
+    result['timestamp'] = (detection_datetime(result.get('timestamp')) or datetime.now()).isoformat()
+    result['user_id'] = get_current_firebase_user_id()
+    result['cloud_saved'] = False
+    save_local_result(app.config['RESULTS_FOLDER'], result)
+    if firestore_ready():
+        try:
+            result['cloud_saved'] = bool(save_detection_result_firestore(result, user_id=result['user_id']))
+        except Exception as error:
+            app.logger.warning('Detection saved locally; cloud write failed (%s).', type(error).__name__)
+        if result['cloud_saved']:
+            save_local_result(app.config['RESULTS_FOLDER'], result)
+    return result
+
+
+@app.route("/save_sensor", methods=["GET", "POST"])
 def save_sensor():
-    data = {
-        "temperature": 29,
-        "humidity": 84,
-        "soil_moisture": 63,
-        "timestamp": datetime.now()
-    }
+    if request.method == "POST":
+        ingest_token = os.getenv('SENSOR_INGEST_TOKEN', '')
+        supplied_token = request.headers.get('X-Sensor-Token', '')
+        if ingest_token:
+            if not hmac.compare_digest(ingest_token, supplied_token):
+                return jsonify({'error': 'Invalid sensor ingest token'}), 401
+        elif request.remote_addr not in {'127.0.0.1', '::1'} or request.headers.get('X-Forwarded-For'):
+            return jsonify({'error': 'Remote sensor ingestion requires SENSOR_INGEST_TOKEN'}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not isinstance(payload.get("zones"), list):
+            return jsonify({"message": "Expected JSON with a zones list"}), 400
 
-    if firestore_db is None:
-        return jsonify({"message": "Firestore is not initialized", "data": data}), 503
+        timestamp = detection_datetime(payload.get('timestamp', datetime.now().isoformat()))
+        if timestamp is None or timestamp > datetime.now() + timedelta(minutes=10):
+            return jsonify({'error': 'Invalid sensor timestamp'}), 400
+        timestamp = timestamp.isoformat()
+        saved_zones = []
+        firebase_saved_zones = 0
+        firebase_error = None
+        for zone in payload["zones"]:
+            if not isinstance(zone, dict):
+                continue
+            try:
+                zone_number = int(zone["zone"])
+                raw_value = int(zone["raw"])
+                moisture = int(zone["moisture"])
+            except (KeyError, TypeError, ValueError):
+                continue
 
-    firestore_db.collection("sensor_data").add(data)
+            if not 1 <= zone_number <= 4 or not 0 <= moisture <= 100:
+                continue
+            if any(item['zone'] == zone_number for item in saved_zones):
+                continue
+            status = 'dry' if moisture <= 30 else 'moist' if moisture <= 70 else 'wet'
 
-    return jsonify({"message": "Sensor data saved!", "data": data})
+            reading = {
+                "value": moisture,
+                "unit": "%",
+                "status": status,
+                "state": status.upper(),
+                "raw_value": raw_value,
+                "sensor_mode": "arduino_analog",
+                "zone": zone_number,
+                "timestamp": timestamp,
+            }
+            sensor_monitor.save_reading(f"soil_moisture_zone{zone_number}", reading)
+            if firestore_ready():
+                try:
+                    if save_sensor_data_firestore(
+                        f"soil_moisture_zone{zone_number}",
+                        reading,
+                        user_id=None,
+                    ):
+                        firebase_saved_zones += 1
+                    else:
+                        firebase_error = "Firestore is not available"
+                except Exception as error:
+                    print(f"⚠️ Unable to save soil moisture data to Firestore: {error}")
+                    firebase_error = "Firestore write failed; check the app logs"
+            else:
+                firebase_error = "Firestore is not initialized"
+            saved_zones.append(reading)
+
+        if not saved_zones:
+            return jsonify({"message": "No valid sensor zones received"}), 400
+
+        response = {
+            "message": "Arduino sensor data saved locally",
+            "zones": saved_zones,
+            "firebase_saved": firebase_error is None,
+            "firebase_saved_zones": firebase_saved_zones,
+        }
+        if firebase_error:
+            response["firebase_error"] = firebase_error
+            return jsonify(response), 503
+
+        response["message"] = "Arduino sensor data saved locally and to Firestore"
+        return jsonify(response), 201
+
+    return jsonify({'message': 'Send actual Arduino readings with POST; GET does not write sensor data.'}), 200
 
 def allowed_file(filename):
     """Check if uploaded file has allowed extension"""
@@ -416,18 +630,112 @@ def is_video_file(filename):
     return filename.rsplit('.', 1)[1].lower() in ALLOWED_VIDEO_EXTENSIONS
 
 def login_required(f):
-    """Decorator to check if user is logged in"""
+    """Use the same account and approval checks on every protected API."""
+    return staff_access_required(f)
+
+
+def admin_required(f):
+    """Decorator to require admin privileges."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         session_token = request.cookies.get('session_token')
         email = verify_session(session_token)
-        
         if not email:
             return jsonify({'error': 'Unauthorized. Please log in.'}), 401
-        
+
+        user = get_user_info(email)
+        if not user:
+            return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+
+        if user.get('role') not in {'admin', 'super_admin'}:
+            return jsonify({'error': 'Admin access required.'}), 403
+
         request.user_email = email
+        request.current_user = user
         return f(*args, **kwargs)
     return decorated_function
+
+
+def staff_access_required(f):
+    """Decorator to require approved staff or admin access."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        session_token = request.cookies.get('session_token')
+        email = verify_session(session_token)
+        if not email:
+            return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+
+        user = get_user_info(email)
+        if not user:
+            return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+
+        role = user.get('role')
+        status = user.get('status', 'pending')
+        if role in {'admin', 'super_admin'}:
+            request.user_email = email
+            request.current_user = user
+            return f(*args, **kwargs)
+
+        if role != 'staff' or status != 'approved':
+            return jsonify({'error': 'Your account is not authorized to access PinyaSense.'}), 403
+
+        request.user_email = email
+        request.current_user = user
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.before_request
+def forward_remote_pump():
+    if os.getenv('PUMP_REMOTE_URL', '').strip() and request.path.startswith('/api/water-pump/'):
+        return staff_access_required(proxy_pump_request)()
+    return None
+
+
+def require_staff_page_access():
+    """Check page access for staff/admin pages without building a full decorator."""
+    session_token = request.cookies.get('session_token')
+    email = verify_session(session_token)
+    if not email:
+        return render_template('login.html')
+
+    user = get_user_info(email)
+    if not user:
+        return render_template('login.html')
+
+    if user.get('role') == 'staff':
+        status = user.get('status', 'pending')
+        if status == 'pending':
+            return render_template('login.html')
+        if status in {'rejected', 'inactive'}:
+            return render_template('login.html')
+        if status != 'approved':
+            return render_template('login.html')
+
+    return None
+
+
+def require_admin_page_access():
+    """Check page access for admin-only pages."""
+    session_token = request.cookies.get('session_token')
+    email = verify_session(session_token)
+    if not email:
+        return render_template('login.html')
+
+    user = get_user_info(email)
+    if not user or user.get('role') not in {'admin', 'super_admin'}:
+        return render_template('login.html')
+    return None
+
+
+def require_super_admin_page_access():
+    """Check page access for the separate Super Admin dashboard."""
+    session_token = request.cookies.get('session_token')
+    email = verify_session(session_token)
+    user = get_user_info(email) if email else None
+    if not user or user.get('role') != 'super_admin':
+        return render_template('login.html', message='Super Admin access required.')
+    return None
 
 
 def extract_video_frame(video_path, output_folder, base_name):
@@ -812,59 +1120,48 @@ def get_translation(key, language='en'):
 # BATCH & VIDEO PROCESSING
 # ============================================
 def process_video_for_detection(video_path, max_frames=10):
-    """Extract multiple frames from video and analyze each"""
+    """Sample at most max_frames, ignoring rejected or failed detections."""
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return None
-    
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     results = []
-    
-    # Sample frames at intervals
-    frame_interval = max(1, total_frames // max_frames)
-    
-    for i in range(0, total_frames, frame_interval):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-        success, frame = cap.read()
-        
-        if not success or frame is None:
-            continue
-        
-        # Save frame temporarily
-        temp_frame_path = os.path.join(app.config['UPLOAD_FOLDER'], f'temp_frame_{i}.jpg')
-        cv2.imwrite(temp_frame_path, frame)
-        
-        # Detect disease in frame
-        try:
-            result = detector.detect(temp_frame_path)
-            result['frame_number'] = i
-            result['frame_timestamp'] = i / cap.get(cv2.CAP_PROP_FPS)
-            results.append(result)
-            os.remove(temp_frame_path)
-        except:
-            pass
-    
-    cap.release()
-    
-    # Aggregate results
+    try:
+        if not cap.isOpened():
+            return None
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+        if total_frames <= 0:
+            return None
+        sample_count = max(1, min(int(max_frames), total_frames))
+        indices = sorted(set(int(i) for i in np.linspace(0, total_frames - 1, sample_count)))
+        with tempfile.TemporaryDirectory(prefix='pinyasense-frames-') as folder:
+            for frame_index in indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                success, frame = cap.read()
+                if not success or frame is None:
+                    continue
+                path = os.path.join(folder, f'frame_{frame_index}.jpg')
+                if not cv2.imwrite(path, frame):
+                    continue
+                result = detector.detect(path)
+                if result.get('error') or result.get('not_pineapple') or not result.get('disease'):
+                    continue
+                result['frame_number'] = frame_index
+                result['frame_timestamp'] = frame_index / fps if fps > 0 else None
+                results.append(result)
+    finally:
+        cap.release()
     if not results:
         return None
-    
-    # Find most common disease
-    diseases = [r.get('disease') for r in results]
-    disease_counts = {}
-    for d in diseases:
-        disease_counts[d] = disease_counts.get(d, 0) + 1
-    
-    final_disease = max(disease_counts, key=disease_counts.get)
-    avg_confidence = np.mean([r.get('confidence', 0) for r in results])
-    
+    counts = {}
+    for result in results:
+        disease = result['disease']
+        counts[disease] = counts.get(disease, 0) + 1
+    final_disease = max(counts, key=counts.get)
+    matching = [r for r in results if r['disease'] == final_disease]
     return {
         'final_disease': final_disease,
-        'avg_confidence': float(avg_confidence),
-        'frame_count': len(results),
-        'disease_distribution': disease_counts,
-        'frame_results': results
+        'avg_confidence': float(np.mean([r.get('confidence', 0) for r in matching])),
+        'frame_count': len(results), 'disease_distribution': counts,
+        'frame_results': results,
     }
 
 # ============================================
@@ -872,7 +1169,7 @@ def process_video_for_detection(video_path, max_frames=10):
 # ============================================
 def analyze_detection_trends(user_id=None, days=30):
     """Analyze detection trends over time"""
-    results = get_detection_results_firestore(user_id=user_id, limit=1000)
+    results, _ = _read_detection_results(user_id=user_id, limit=1000)
     
     if not results:
         return {
@@ -888,7 +1185,7 @@ def analyze_detection_trends(user_id=None, days=30):
     cutoff_date = datetime.now() - timedelta(days=days)
     recent_results = [
         r for r in results 
-        if datetime.fromisoformat(r.get('timestamp', datetime.now().isoformat())) > cutoff_date
+        if (detection_datetime(r.get('timestamp')) or datetime.min) > cutoff_date
     ]
     
     if not recent_results:
@@ -906,7 +1203,7 @@ def analyze_detection_trends(user_id=None, days=30):
     disease_timeline = {}
     
     for result in recent_results:
-        date = result.get('timestamp', '').split('T')[0]
+        date = detection_datetime(result.get('timestamp')).date().isoformat()
         disease = result.get('disease', 'Unknown')
         
         if date not in trends:
@@ -931,12 +1228,13 @@ def analyze_detection_trends(user_id=None, days=30):
 # ============================================
 def generate_csv_report(user_id=None, limit=1000, filters=None):
     """Generate CSV report of detection history"""
-    results = get_detection_results_firestore(user_id=user_id, limit=limit)
     filters = filters or {'scope': 'detections'}
     scope = filters.get('scope', 'detections')
     if scope == 'detections':
+        results, _ = _read_detection_results(user_id=user_id, limit=limit)
         results = _filter_detection_results(results, filters)
     else:
+        results = get_sensor_data_firestore(filters.get('sensor_type') or 'soil_moisture', user_id=user_id, limit=limit, timeout=8)
         results = _filter_sensor_results(results, filters)
     
     output = StringIO()
@@ -957,7 +1255,8 @@ def generate_csv_report(user_id=None, limit=1000, filters=None):
     
     # Data rows
     for result in results:
-        timestamp = result.get('timestamp', '').split('T')
+        parsed = detection_datetime(result.get('timestamp'))
+        timestamp = parsed.isoformat().split('T') if parsed else []
         date = timestamp[0] if timestamp else 'Unknown'
         time = timestamp[1][:8] if len(timestamp) > 1 else 'Unknown'
         
@@ -978,7 +1277,7 @@ def generate_csv_report(user_id=None, limit=1000, filters=None):
                 date,
                 time,
                 result.get('sensor_type', 'Unknown'),
-                sensor_data.get('humidity') or sensor_data.get('temperature') or result.get('value', 'Unknown'),
+                sensor_data.get('value', sensor_data.get('humidity', sensor_data.get('temperature', result.get('value', 'Unknown')))),
                 sensor_data.get('unit') or result.get('unit', ''),
                 result.get('farm', 'Unknown')
             ])
@@ -994,7 +1293,8 @@ def send_scheduled_reports(filters=None, recipients=None):
     try:
         recipients_value = recipients if recipients is not None else os.getenv('REPORT_RECIPIENTS', '')
         if not recipients_value:
-            recipients_value = 'agripinyaa@gmail.com'
+            app.logger.info('Scheduled report skipped: REPORT_RECIPIENTS is not configured.')
+            return False
 
         if isinstance(recipients_value, str):
             recipients = [r.strip() for r in recipients_value.split(',') if r.strip()]
@@ -1008,7 +1308,7 @@ def send_scheduled_reports(filters=None, recipients=None):
             sensor_type=os.getenv('REPORT_SENSOR_TYPE'),
             media_type=os.getenv('REPORT_MEDIA_TYPE'),
         )
-        filters['scope'] = os.getenv('REPORT_SCOPE', 'detections')
+        filters.setdefault('scope', os.getenv('REPORT_SCOPE', 'detections'))
 
         print(f'Starting scheduled report generation for: {recipients}')
 
@@ -1021,6 +1321,7 @@ def send_scheduled_reports(filters=None, recipients=None):
             pdf_content = generate_pdf_report(limit=200, filters=filters)
 
         # Send to each recipient
+        deliveries = []
         for r in recipients:
             subject = f'AgriPinya - Scheduled Detection Report ({datetime.utcnow().date().isoformat()})'
             body = 'Attached are the scheduled detection reports (CSV and PDF if available).'
@@ -1028,16 +1329,15 @@ def send_scheduled_reports(filters=None, recipients=None):
             if pdf_content:
                 attachments['detections_report.pdf'] = pdf_content
 
-            send_report_email(r, subject, body, attachments=attachments)
+            deliveries.append(send_report_email(r, subject, body, attachments=attachments))
 
-        print('Scheduled reports sent.')
-        return True
+        return bool(deliveries) and all(deliveries)
     except Exception as e:
         print('Error in scheduled report job:', str(e))
         return False
 
 
-WATER_PUMP_SCHEDULES_FILE = os.path.join('data', 'water_pump_schedules.json')
+WATER_PUMP_SCHEDULES_FILE = os.path.join(PROJECT_ROOT, 'data', 'water_pump_schedules.json')
 
 
 def _water_pump_schedule_job_id(schedule_id: str) -> str:
@@ -1072,8 +1372,7 @@ def _load_water_pump_schedules() -> List[Dict]:
 
 def _save_water_pump_schedules(schedules: List[Dict]) -> None:
     path = _water_pump_schedule_path()
-    with open(path, 'w') as f:
-        json.dump(schedules, f, indent=2)
+    write_json_atomic(path, schedules)
 
 
 def _normalize_days_of_week(days) -> List[str]:
@@ -1082,6 +1381,8 @@ def _normalize_days_of_week(days) -> List[str]:
 
     if isinstance(days, str):
         days = [item.strip() for item in days.split(',')]
+    if not isinstance(days, (list, tuple, set)):
+        return []
 
     canonical = {
         'mon': 'mon', 'monday': 'mon',
@@ -1148,7 +1449,7 @@ def _register_water_pump_schedule(schedule: Dict) -> bool:
         'minute': schedule_time['minute'],
     }
 
-    days_of_week = _normalize_days_of_week(schedule.get('days_of_week', []))
+    days_of_week = _normalize_days_of_week(schedule.get('days_of_week', [])) if schedule.get('schedule_type') == 'weekly' else []
     if days_of_week:
         trigger_kwargs['day_of_week'] = ','.join(days_of_week)
 
@@ -1209,7 +1510,7 @@ def _run_water_pump_schedule(schedule_id: str) -> bool:
     return not bool(result.get('error'))
 
 
-AUTO_PUMP_SETTINGS_FILE = os.path.join('data', 'auto_pump_settings.json')
+AUTO_PUMP_SETTINGS_FILE = os.path.join(PROJECT_ROOT, 'data', 'auto_pump_settings.json')
 
 
 def _auto_pump_settings_path() -> str:
@@ -1238,8 +1539,7 @@ def _load_auto_pump_settings() -> Dict:
 
 def _save_auto_pump_settings(settings: Dict) -> None:
     path = _auto_pump_settings_path()
-    with open(path, 'w') as f:
-        json.dump(settings, f, indent=2)
+    write_json_atomic(path, settings)
 
 
 def _auto_pump_enabled() -> bool:
@@ -1273,18 +1573,22 @@ def auto_irrigation_tick() -> bool:
     now = datetime.now()
 
     try:
-        reading = sensor_monitor.read_soil_moisture()
+        # Read all configured soil sensors (one per zone) and decide watering based
+        # on SOIL_ZONE_WATER_POLICY (default: 'any' zone dry triggers irrigation).
+        reading = sensor_monitor.read_soil_moisture_all()
         _AUTO_PUMP_STATE['last_seen_ts'] = now.isoformat()
 
-        if not isinstance(reading, dict) or reading.get('error'):
+        summary = reading.get('summary') if isinstance(reading, dict) else None
+        if not summary or summary.get('valid_zones', 0) == 0:
             _AUTO_PUMP_STATE['last_seen_status'] = 'error'
             _AUTO_PUMP_STATE['consecutive_dry'] = 0
             return False
 
-        status = str(reading.get('status') or '').strip().lower()
+        should_water = bool(summary.get('watering_recommended'))
+        status = 'dry' if should_water else 'wet'
         _AUTO_PUMP_STATE['last_seen_status'] = status
 
-        if status == 'dry':
+        if should_water:
             _AUTO_PUMP_STATE['consecutive_dry'] += 1
         else:
             _AUTO_PUMP_STATE['consecutive_dry'] = 0
@@ -1347,7 +1651,6 @@ if SCHEDULER_AVAILABLE:
 
         _sync_water_pump_schedules_to_scheduler()
         scheduler.start()
-        print('Scheduler started: weekly report job scheduled every 7 days')
     except Exception as e:
         print('Failed to start scheduler:', str(e))
 else:
@@ -1355,6 +1658,7 @@ else:
 
 
 @app.route('/api/admin/trigger-weekly-report', methods=['POST'])
+@admin_required
 def trigger_weekly_report():
     """Manual trigger for the weekly report (admin use)."""
     try:
@@ -1378,7 +1682,7 @@ def generate_pdf_report(user_id=None, limit=100, filters=None):
     scope = filters.get('scope', 'detections')
 
     if scope == 'detections':
-        results = get_detection_results_firestore(user_id=user_id, limit=limit)
+        results, _ = _read_detection_results(user_id=user_id, limit=limit)
         results = _filter_detection_results(results, filters)
         trends = analyze_detection_trends(user_id=user_id, days=30)
     else:
@@ -1577,7 +1881,8 @@ def calculate_disease_spread_risk(detection_history, field_coordinates=None):
     cutoff = datetime.now() - timedelta(days=7)
     recent_diseases = [
         d for d in recent 
-        if datetime.fromisoformat(d.get('timestamp', datetime.now().isoformat())) > cutoff
+        if ((detection_datetime(d.get('timestamp')) or datetime.min) > cutoff
+            and d.get('disease') not in {'Healthy', 'Unknown', 'Not Pineapple', None})
     ]
     
     disease_count = len(recent_diseases)
@@ -1611,24 +1916,81 @@ def landing():
 
 @app.route('/dashboard')
 def index():
-    """Render main dashboard - requires authentication"""
+    """Render main dashboard - requires authentication and approval."""
     session_token = request.cookies.get('session_token')
     email = verify_session(session_token)
-    
     if not email:
-        return render_template('login.html')  # Redirect to login if not authenticated
-    
+        return render_template('login.html')
+
+    user = get_user_info(email)
+    if not user:
+        return render_template('login.html')
+
+    if user.get('role') == 'super_admin':
+        return redirect('/super-admin/dashboard')
+
+    if user.get('role') == 'staff':
+        status = user.get('status', 'pending')
+        if status == 'pending':
+            return render_template('login.html', message='Your account is still waiting for Admin approval.')
+        if status in {'rejected', 'inactive'}:
+            return render_template('login.html', message='Your account is not authorized to access PinyaSense.')
+        if status != 'approved':
+            return render_template('login.html', message='Your account is not authorized to access PinyaSense.')
+
     return render_template('index.html')
 
 @app.route('/about')
 def about():
     """Render about page"""
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
     return render_template('about.html')
 
 @app.route('/diseases')
 def diseases():
     """Render diseases page"""
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
     return render_template('diseases.html')
+
+@app.route('/admin')
+@app.route('/admin/staff-requests')
+def admin_staff_requests_page():
+    """Render staff approval dashboard for admin users."""
+    blocked = require_admin_page_access()
+    if blocked is not None:
+        return blocked
+    session_email = verify_session(request.cookies.get('session_token'))
+    current_user = get_user_info(session_email) if session_email else None
+    dashboard_url = '/super-admin/dashboard' if current_user and current_user.get('role') == 'super_admin' else '/dashboard'
+    return render_template('admin_staff.html', dashboard_url=dashboard_url)
+
+
+@app.route('/super-admin')
+@app.route('/super-admin/dashboard')
+def super_admin_dashboard_page():
+    """Render the separate Super Admin dashboard."""
+    blocked = require_super_admin_page_access()
+    if blocked is not None:
+        return blocked
+    return render_template('super_admin_dashboard.html')
+
+
+@app.route('/admin/notifications')
+@app.route('/admin/activity-logs')
+@app.route('/admin/alerts')
+@app.route('/admin/analytics')
+@app.route('/admin/reports')
+@app.route('/admin/settings')
+def super_admin_section_page():
+    """Render protected Super Admin management sections."""
+    blocked = require_super_admin_page_access()
+    if blocked is not None:
+        return blocked
+    return render_template('super_admin_section.html', active_page=request.path.rsplit('/', 1)[-1])
 
 @app.route('/login')
 def login():
@@ -1639,6 +2001,18 @@ def login():
 def signup():
     """Render signup page"""
     return render_template('signup.html')
+
+
+@app.route('/terms')
+def terms_of_service():
+    """Show terms publicly so visitors can read them before registering."""
+    return render_template('legal.html', policy='terms')
+
+
+@app.route('/privacy')
+def privacy_policy():
+    """Show the privacy notice before account information is submitted."""
+    return render_template('legal.html', policy='privacy')
 
 
 @app.route('/manifest.webmanifest')
@@ -1654,54 +2028,54 @@ def service_worker():
 
 @app.route('/training-results')
 def training_results():
-    """Render training results/history page"""
+    """Show saved detections rather than referencing a missing template."""
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
     return render_template('training_results.html')
 
 @app.route('/api/signup', methods=['POST'])
 def api_signup():
-    """API endpoint for user registration"""
+    """API endpoint for user registration. All new staff accounts start pending."""
     try:
         data = request.get_json()
-        
-        # Validate input
+
         if not data:
             return jsonify({'success': False, 'message': 'No data provided'}), 400
-        
+
         fullname = data.get('fullname', '').strip()
         email = data.get('email', '').strip()
         password = data.get('password', '')
         confirm_password = data.get('confirmPassword', '')
         phone = data.get('phone', '').strip()
-        
-        # Validation
+
         if not fullname:
             return jsonify({'success': False, 'message': 'Full name is required'}), 400
-        
         if not email:
             return jsonify({'success': False, 'message': 'Email is required'}), 400
-        
         if '@' not in email:
             return jsonify({'success': False, 'message': 'Invalid email format'}), 400
-        
         if not password:
             return jsonify({'success': False, 'message': 'Password is required'}), 400
-        
         if len(password) < 8:
             return jsonify({'success': False, 'message': 'Password must be at least 8 characters'}), 400
-        
         if password != confirm_password:
             return jsonify({'success': False, 'message': 'Passwords do not match'}), 400
-        
-        # Register user
+
         result = register_user(fullname, email, password, phone)
-        
+
         if result['success']:
-            # Send welcome email
-            send_welcome_email(email, fullname)
+            try:
+                sync_user_firestore(email)
+            except Exception as firestore_error:
+                print(f'⚠️ Unable to sync new user to Firestore: {firestore_error}')
+            try:
+                send_welcome_email(email, fullname)
+            except Exception:
+                pass
             return jsonify(result), 201
-        else:
-            return jsonify(result), 400
-    
+        return jsonify(result), 400
+
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -1734,6 +2108,33 @@ def api_login():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+
+@app.route('/api/admin/super-admins', methods=['POST'])
+@admin_required
+def api_create_super_admin():
+    """Create a separate approved Super Admin account from an admin session."""
+    data = request.get_json(silent=True) or {}
+    fullname = str(data.get('fullname') or '').strip()
+    email = str(data.get('email') or '').strip()
+    password = data.get('password') or ''
+    confirm_password = data.get('confirmPassword') or ''
+    phone = str(data.get('phone') or '').strip()
+
+    if len(password) < 8:
+        return jsonify({'success': False, 'message': 'Password must be at least 8 characters'}), 400
+    if password != confirm_password:
+        return jsonify({'success': False, 'message': 'Passwords do not match'}), 400
+    if '@' not in email:
+        return jsonify({'success': False, 'message': 'Valid email is required'}), 400
+
+    result = create_super_admin(fullname, email, password, phone)
+    if result.get('success'):
+        try:
+            sync_user_firestore(email)
+        except Exception as firestore_error:
+            print(f'⚠️ Unable to sync Super Admin to Firestore: {firestore_error}')
+    return jsonify(result), 201 if result.get('success') else 400
+
 @app.route('/api/logout', methods=['POST'])
 def api_logout():
     """API endpoint for user logout"""
@@ -1752,19 +2153,87 @@ def api_logout():
 
 @app.route('/api/verify-session', methods=['GET'])
 def api_verify_session():
-    """API endpoint to verify if user is logged in"""
+    """API endpoint to verify if user is logged in and authorized."""
     try:
         session_token = request.cookies.get('session_token')
         email = verify_session(session_token)
-        
-        if email:
-            user_info = get_user_info(email)
-            return jsonify({'authenticated': True, 'user': user_info}), 200
-        else:
+
+        if not email:
             return jsonify({'authenticated': False}), 200
-    
+
+        user_info = get_user_info(email)
+        if not user_info:
+            return jsonify({'authenticated': False}), 200
+
+        if user_info.get('role') == 'staff':
+            status = user_info.get('status', 'pending')
+            if status == 'pending':
+                return jsonify({'authenticated': False, 'message': 'Your account is still waiting for Admin approval.'}), 200
+            if status in {'rejected', 'inactive'}:
+                return jsonify({'authenticated': False, 'message': 'Your account is not authorized to access PinyaSense.'}), 200
+
+        return jsonify({'authenticated': True, 'user': user_info}), 200
+
     except Exception as e:
         return jsonify({'authenticated': False, 'message': str(e)}), 500
+
+@app.route('/api/admin/staff-requests', methods=['GET'])
+@admin_required
+def admin_staff_requests():
+    """Return pending and relevant staff accounts for admin review."""
+    staff_by_email = {account['email']: account for account in list_staff_accounts()}
+
+    if firestore_ready():
+        try:
+            for document in firestore_db.collection('users').stream():
+                account = document.to_dict() or {}
+                email = str(account.get('email') or '').strip().lower()
+                if not email or account.get('role', 'staff') != 'staff' or email in staff_by_email:
+                    continue
+                created_at = account.get('created_at')
+                staff_by_email[email] = {
+                    'email': email,
+                    'fullname': account.get('fullname') or 'User',
+                    'phone': account.get('phone', ''),
+                    'role': 'staff',
+                    'status': account.get('status', 'pending'),
+                    'created_at': created_at.isoformat() if hasattr(created_at, 'isoformat') else created_at,
+                    'last_login': account.get('last_login'),
+                }
+        except Exception as firestore_error:
+            print(f'⚠️ Unable to load Firestore staff accounts: {firestore_error}')
+
+    staff = sorted(staff_by_email.values(), key=lambda account: account.get('created_at') or '')
+    return jsonify({'success': True, 'staff': staff}), 200
+
+
+@app.route('/api/admin/staff-requests/<email>', methods=['PATCH'])
+@admin_required
+def admin_update_staff_status(email):
+    """Approve, reject, or deactivate a staff account."""
+    data = request.get_json(silent=True) or {}
+    status = (data.get('status') or '').strip().lower()
+    if not status:
+        return jsonify({'success': False, 'message': 'Status is required'}), 400
+    result = update_staff_account_status(email, status)
+    if not result.get('success') and firestore_ready():
+        document_id = (
+            email.strip().lower()
+            .replace('.', '_').replace('#', '_').replace('$', '_')
+            .replace('[', '_').replace(']', '_').replace('/', '_')
+        )
+        reference = firestore_db.collection('users').document(document_id)
+        snapshot = reference.get()
+        if snapshot.exists:
+            reference.update({'status': status, 'updated_at': datetime.now().isoformat()})
+            result = {'success': True, 'message': 'Staff status updated in Firestore.'}
+    if result.get('success'):
+        try:
+            sync_user_firestore(email, deleted=result.get('user', {}).get('status') == 'deleted')
+        except Exception as firestore_error:
+            print(f'⚠️ Unable to sync staff status to Firestore: {firestore_error}')
+    return jsonify(result), 200 if result.get('success') else 400
+
 
 @app.route('/api/profile', methods=['PUT'])
 @login_required
@@ -1860,37 +2329,15 @@ def api_reset_password():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/training-results', methods=['GET'])
+@staff_access_required
 def api_training_results():
-    """API endpoint to get all training/detection results"""
-    try:
-        results = []
-        results_path = 'results'
-        
-        if os.path.exists(results_path):
-            for filename in sorted(os.listdir(results_path), reverse=True):
-                if filename.endswith('.json') and filename != '.gitkeep':
-                    filepath = os.path.join(results_path, filename)
-                    try:
-                        with open(filepath, 'r') as f:
-                            data = json.load(f)
-                            # Extract timestamp from filename (format: YYYYMMDD_HHMMSS_result.json)
-                            timestamp_str = filename.split('_result.json')[0]
-                            data['filename'] = filename
-                            data['timestamp'] = timestamp_str
-                            results.append(data)
-                    except:
-                        continue
-        
-        return jsonify({
-            'success': True,
-            'total_results': len(results),
-            'results': results
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+    """Compatibility endpoint for the saved detection records page."""
+    results, source = _read_detection_results(user_id=_detection_user_id(), limit=1000)
+    return jsonify({'success': True, 'total_results': len(results),
+                    'results': results, 'data_source': source}), 200
 
 @app.route('/api/detect', methods=['POST'])
+@staff_access_required
 def detect_disease():
     """API endpoint for disease detection"""
     try:
@@ -1910,7 +2357,7 @@ def detect_disease():
         
         # Save uploaded file
         filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_' + uuid4().hex[:8]
         unique_filename = f"{timestamp}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
         file.save(filepath)
@@ -1940,28 +2387,19 @@ def detect_disease():
             result['timestamp'] = timestamp
             if farm:
                 result['farm'] = farm
-            return jsonify(result), 200
-        
-        # Save result
-        result_filename = f"{timestamp}_result.json"
-        result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
-        with open(result_path, 'w') as f:
-            json.dump(result, f, indent=2)
+            return jsonify(result), 422
+        if result.get('error'):
+            return jsonify(result), 400
         
         # Add media metadata to result
         result['image_path'] = preview_image_filename
         result['media_type'] = detection_media_type
         result['media_path'] = unique_filename
-        result['timestamp'] = timestamp
+        result['timestamp'] = datetime.now().isoformat()
         if farm:
             result['farm'] = farm
 
-        # Also store in Firestore when available.
-        if firestore_ready():
-            save_detection_result_firestore(
-                result,
-                user_id=get_current_firebase_user_id()
-            )
+        _persist_detection_result(result)
         
         return jsonify(result), 200
         
@@ -1969,183 +2407,147 @@ def detect_disease():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/history', methods=['GET'])
+@staff_access_required
 def get_history():
-    """Get detection history"""
-    try:
-        if firestore_ready():
-            firebase_results = get_detection_results_firestore(
-                user_id=get_current_firebase_user_id(),
-                limit=50
-            )
-            if firebase_results:
-                return jsonify({'results': firebase_results}), 200
+    """Read history with the same scope and offline fallback as the dashboard."""
+    results, source = _read_detection_results(user_id=_detection_user_id(), limit=50)
+    return jsonify({'results': results, 'data_source': source}), 200
 
-        results = []
-        if os.path.exists(app.config['RESULTS_FOLDER']):
-            for filename in sorted(os.listdir(app.config['RESULTS_FOLDER']), reverse=True):
-                if filename.endswith('.json'):
-                    filepath = os.path.join(app.config['RESULTS_FOLDER'], filename)
-                    with open(filepath, 'r') as f:
-                        data = json.load(f)
-                        results.append(data)
-        
-        return jsonify({'results': results[:50]}), 200  # Return last 50 results
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+
+@app.route('/uploads/<path:filename>')
+@staff_access_required
+def uploaded_media(filename):
+    """Serve saved media only to its owner or a farm administrator."""
+    if filename != os.path.basename(filename) or '\\' in filename:
+        return jsonify({'error': 'Media not found'}), 404
+    owner = _detection_user_id()
+    if owner is not None:
+        records = load_local_results(app.config['RESULTS_FOLDER'], user_id=owner)
+        permitted = any(filename == os.path.basename(str(row.get(key) or '').replace('\\', '/'))
+                        for row in records for key in ('image_path', 'media_path'))
+        if not permitted:
+            return jsonify({'error': 'Media not found'}), 404
+    response = send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+# Disease library shown on the Diseases page; its symptoms also drive the
+# Forecast page's problem-to-disease matching.
+DISEASE_LIBRARY = [
+    {
+        'name': 'Heart Rot',
+        'scientific_name': 'Phytophthora spp.',
+        'symptoms': [
+            'Dark spot formation at the fruit core',
+            'Foul odor inside the pineapple',
+            'Wilting flowers or fruit tissue'
+        ],
+        'treatment': [
+            'Apply fungicide such as metalaxyl',
+            'Avoid excessive water around the plant',
+            'Remove infected plants immediately'
+        ],
+        'prevention': [
+            'Plant in well-drained areas',
+            'Use certified planting materials',
+            'Perform regular field inspections'
+        ]
+    },
+    {
+        'name': 'Fruit Rot',
+        'scientific_name': 'Thielaviopsis paradoxa',
+        'symptoms': [
+            'Black discoloration on fruit skin',
+            'Soft spots on the fruit',
+            'Rapid decay after harvest'
+        ],
+        'treatment': [
+            'Use benomyl or thiabendazole',
+            'Sanitize wounds on fruit surfaces',
+            'Keep harvested fruit dry'
+        ],
+        'prevention': [
+            'Handle fruit carefully during harvest',
+            'Prevent cuts and bruises on fruit',
+            'Apply post-harvest fungicide treatment'
+        ]
+    },
+    {
+        'name': 'Yellow Spot',
+        'scientific_name': 'Curvularia spp.',
+        'symptoms': [
+            'Yellow spots on leaves',
+            'Wilting of affected leaves',
+            'Reduced fruit quality'
+        ],
+        'treatment': [
+            'Spray copper-based fungicide',
+            'Remove infected leaves',
+            'Use biological control agents'
+        ],
+        'prevention': [
+            'Keep the field clean',
+            'Avoid excessive humidity',
+            'Maintain regular fertilization for healthy plants'
+        ]
+    },
+    {
+        'name': 'Pink Disease',
+        'scientific_name': 'Pantoea citrea',
+        'symptoms': [
+            'Pink coloration inside the fruit',
+            'Soft tissue in affected areas',
+            'Water-soaked appearance'
+        ],
+        'treatment': [
+            'No direct cure after infection',
+            'Remove infected fruits',
+            'Disinfect tools and equipment'
+        ],
+        'prevention': [
+            'Handle fruit properly',
+            'Use clean tools during harvest',
+            'Control insect pests'
+        ]
+    },
+    {
+        'name': 'Healthy',
+        'scientific_name': 'N/A',
+        'symptoms': [
+            'Healthy green leaf color',
+            'No spots or discoloration',
+            'Normal plant and fruit development'
+        ],
+        'treatment': [
+            'Continue regular maintenance practices'
+        ],
+        'prevention': [
+            'Perform regular fertilization',
+            'Provide proper watering levels',
+            'Monitor pests and diseases consistently'
+        ]
+    }
+]
+
 
 @app.route('/api/diseases', methods=['GET'])
 def get_diseases():
     """Get list of pineapple diseases information"""
-    diseases = {
-        'diseases': [
-            {
-                'name': 'Heart Rot',
-                'scientific_name': 'Phytophthora spp.',
-                'symptoms': [
-                    'Dark spot formation at the fruit core',
-                    'Foul odor inside the pineapple',
-                    'Wilting flowers or fruit tissue'
-                ],
-                'treatment': [
-                    'Apply fungicide such as metalaxyl',
-                    'Avoid excessive water around the plant',
-                    'Remove infected plants immediately'
-                ],
-                'prevention': [
-                    'Plant in well-drained areas',
-                    'Use certified planting materials',
-                    'Perform regular field inspections'
-                ]
-            },
-            {
-                'name': 'Fruit Rot',
-                'scientific_name': 'Thielaviopsis paradoxa',
-                'symptoms': [
-                    'Black discoloration on fruit skin',
-                    'Soft spots on the fruit',
-                    'Rapid decay after harvest'
-                ],
-                'treatment': [
-                    'Use benomyl or thiabendazole',
-                    'Sanitize wounds on fruit surfaces',
-                    'Keep harvested fruit dry'
-                ],
-                'prevention': [
-                    'Handle fruit carefully during harvest',
-                    'Prevent cuts and bruises on fruit',
-                    'Apply post-harvest fungicide treatment'
-                ]
-            },
-            {
-                'name': 'Yellow Spot',
-                'scientific_name': 'Curvularia spp.',
-                'symptoms': [
-                    'Yellow spots on leaves',
-                    'Wilting of affected leaves',
-                    'Reduced fruit quality'
-                ],
-                'treatment': [
-                    'Spray copper-based fungicide',
-                    'Remove infected leaves',
-                    'Use biological control agents'
-                ],
-                'prevention': [
-                    'Keep the field clean',
-                    'Avoid excessive humidity',
-                    'Maintain regular fertilization for healthy plants'
-                ]
-            },
-            {
-                'name': 'Pink Disease',
-                'scientific_name': 'Pantoea citrea',
-                'symptoms': [
-                    'Pink coloration inside the fruit',
-                    'Soft tissue in affected areas',
-                    'Water-soaked appearance'
-                ],
-                'treatment': [
-                    'No direct cure after infection',
-                    'Remove infected fruits',
-                    'Disinfect tools and equipment'
-                ],
-                'prevention': [
-                    'Handle fruit properly',
-                    'Use clean tools during harvest',
-                    'Control insect pests'
-                ]
-            },
-            {
-                'name': 'Healthy',
-                'scientific_name': 'N/A',
-                'symptoms': [
-                    'Healthy green leaf color',
-                    'No spots or discoloration',
-                    'Normal plant and fruit development'
-                ],
-                'treatment': [
-                    'Continue regular maintenance practices'
-                ],
-                'prevention': [
-                    'Perform regular fertilization',
-                    'Provide proper watering levels',
-                    'Monitor pests and diseases consistently'
-                ]
-            }
-        ]
-    }
-    return jsonify(diseases), 200
+    return jsonify({'diseases': DISEASE_LIBRARY}), 200
 
 @app.route('/api/stats', methods=['GET'])
+@staff_access_required
 def get_stats():
-    """Get detection statistics"""
-    try:
-        if firestore_ready():
-            firebase_stats = aggregate_statistics_firestore(
-                user_id=get_current_firebase_user_id()
-            )
-            if firebase_stats:
-                return jsonify({
-                    'total_detections': firebase_stats.get('total_detections', 0),
-                    'disease_count': firebase_stats.get('disease_counts', {}),
-                    'recent_detections': get_detection_results_firestore(
-                        user_id=get_current_firebase_user_id(),
-                        limit=10
-                    )
-                }), 200
-
-        stats = {
-            'total_detections': 0,
-            'disease_count': {},
-            'recent_detections': []
-        }
-        
-        if os.path.exists(app.config['RESULTS_FOLDER']):
-            files = [f for f in os.listdir(app.config['RESULTS_FOLDER']) if f.endswith('.json')]
-            stats['total_detections'] = len(files)
-            
-            for filename in sorted(files, reverse=True)[:10]:
-                filepath = os.path.join(app.config['RESULTS_FOLDER'], filename)
-                with open(filepath, 'r') as f:
-                    data = json.load(f)
-                    disease = data.get('disease', 'Unknown')
-                    
-                    # Count diseases
-                    if disease not in stats['disease_count']:
-                        stats['disease_count'][disease] = 0
-                    stats['disease_count'][disease] += 1
-                    
-                    # Add to recent detections
-                    stats['recent_detections'].append({
-                        'disease': disease,
-                        'confidence': data.get('confidence', 0),
-                        'timestamp': data.get('timestamp', '')
-                    })
-        
-        return jsonify(stats), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    """Count the same accessible records used by history and exports."""
+    results, source = _read_detection_results(user_id=_detection_user_id(), limit=None)
+    counts = {}
+    for result in results:
+        disease = result.get('disease') or 'Unknown'
+        counts[disease] = counts.get(disease, 0) + 1
+    return jsonify({
+        'total_detections': len(results), 'disease_count': counts,
+        'recent_detections': results[:10], 'data_source': source,
+    }), 200
 
 # ============================================
 # SENSOR MONITORING ROUTES
@@ -2154,26 +2556,31 @@ def get_stats():
 @app.route('/sensors')
 def sensors_dashboard():
     """Render sensor dashboard page"""
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
     return render_template('sensors.html')
 
 @app.route('/sensors/soil-moisture')
 def soil_moisture_page():
     """Render soil moisture monitoring page"""
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
     return render_template('soil_moisture.html')
-
-@app.route('/sensors/temperature-humidity')
-def temperature_humidity_page():
-    """Render temperature & humidity monitoring page"""
-    return render_template('temp_humidity.html')
 
 @app.route('/sensors/water-pump')
 def water_pump_page():
     """Render water pump control page"""
-    return render_template('water_pump.html')
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
+    return render_template('water_pump.html', pump_max_seconds=sensor_monitor.WATER_PUMP_MAX_DURATION)
 
 # Sensor API Endpoints
 
 @app.route('/api/sensors/soil-moisture', methods=['GET'])
+@staff_access_required
 def get_soil_moisture():
     """Get current soil moisture reading"""
     try:
@@ -2195,7 +2602,111 @@ def get_soil_moisture():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/sensors/soil-moisture/zones', methods=['GET'])
+@staff_access_required
+def get_soil_moisture_zones():
+    """Get current readings from all configured soil moisture sensors (one per zone)."""
+    try:
+        result = sensor_monitor.read_soil_moisture_all()
+        for zone_reading in result.get('zones', []):
+            if 'error' not in zone_reading:
+                zone = zone_reading.get('zone')
+                sensor_type = f'soil_moisture_zone{zone}' if zone else 'soil_moisture'
+                sensor_monitor.save_reading(sensor_type, zone_reading)
+                if firestore_ready():
+                    save_sensor_data_firestore(
+                        sensor_type,
+                        zone_reading,
+                        user_id=get_current_firebase_user_id()
+                    )
+        try:
+            sensor_monitor.check_and_notify_all_users()
+        except Exception:
+            pass
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def _is_recorded_arduino_soil_reading(reading):
+    value = reading.get('value')
+    return (
+        not reading.get('error')
+        and reading.get('sensor_mode') == 'arduino_analog'
+        and not str(reading.get('data_source', '')).lower().startswith('simulated')
+        and isinstance(value, (int, float)) and not isinstance(value, bool)
+        and 0 <= value <= 100
+    )
+
+
+@app.route('/api/sensors/soil-moisture/arduino-zones', methods=['GET'])
+@staff_access_required
+def get_arduino_soil_moisture_zones():
+    """Prefer recorded Arduino readings; use a read-only display fallback if absent."""
+    try:
+        now = datetime.now()
+        live_zones = []
+        for zone_number in range(1, 5):
+            readings = sensor_monitor.get_readings(
+                f'soil_moisture_zone{zone_number}',
+                hours=24,
+            )
+            for candidate in reversed(readings):
+                if not _is_recorded_arduino_soil_reading(candidate):
+                    continue
+                try:
+                    reading_time = datetime.fromisoformat(str(candidate['timestamp']).replace('Z', '+00:00'))
+                    if reading_time.tzinfo is not None:
+                        reading_time = reading_time.astimezone().replace(tzinfo=None)
+                    age_seconds = (now - reading_time).total_seconds()
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if 0 <= age_seconds <= 180:
+                    reading = dict(candidate)
+                    reading['zone'] = zone_number
+                    live_zones.append(reading)
+                    break
+
+        if live_zones:
+            zones = live_zones
+            source = 'arduino_serial'
+        else:
+            zones = []
+            source = 'recent_history'
+            for zone_number in range(1, 5):
+                readings = sensor_monitor.get_readings(
+                    f'soil_moisture_zone{zone_number}',
+                    hours=72,
+                )
+                valid_readings = [reading for reading in readings if _is_recorded_arduino_soil_reading(reading)]
+                if valid_readings:
+                    reading = dict(valid_readings[-1])
+                    reading['zone'] = zone_number
+                    zones.append(reading)
+
+        if not zones:
+            zones = preview_zones(now)
+            source = 'simulated'
+
+        dry_zones = [zone for zone in zones if zone.get('state') == 'DRY']
+        return jsonify({
+            'zones': zones,
+            'source': source,
+            'sensor_live': source == 'arduino_serial',
+            'summary': {
+                'total_zones': 4,
+                'valid_zones': len(zones),
+                'dry_zones': len(dry_zones),
+                'wet_zones': sum(zone.get('state') == 'WET' for zone in zones),
+                'moist_zones': sum(zone.get('state') == 'MOIST' for zone in zones),
+                'policy': sensor_monitor.SOIL_ZONE_WATER_POLICY,
+                'watering_recommended': bool(dry_zones),
+            },
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/water-pump/on', methods=['POST'])
+@staff_access_required
 def water_pump_on():
     """Turn the water pump on."""
     try:
@@ -2204,6 +2715,7 @@ def water_pump_on():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/water-pump/off', methods=['POST'])
+@staff_access_required
 def water_pump_off():
     """Turn the water pump off."""
     try:
@@ -2212,20 +2724,27 @@ def water_pump_off():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/water-pump/run', methods=['POST'])
+@staff_access_required
 def water_pump_run():
     """Run the water pump for a short duration."""
     try:
         payload = request.get_json(silent=True) or {}
         duration_seconds = payload.get('duration_seconds', request.args.get('duration_seconds'))
         duration_seconds = int(duration_seconds) if duration_seconds not in (None, '') else None
+        if duration_seconds is not None and not 1 <= duration_seconds <= sensor_monitor.WATER_PUMP_MAX_DURATION:
+            raise ValueError(f'duration_seconds must be between 1 and {sensor_monitor.WATER_PUMP_MAX_DURATION}')
         return jsonify(sensor_monitor.run_water_pump_for_seconds(duration_seconds)), 200
+    except (ValueError, TypeError) as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/water-pump/status', methods=['GET'])
+@staff_access_required
 def water_pump_status():
     """Get best-effort water pump status."""
     try:
+        hardware = sensor_monitor.get_water_pump_hardware_status()
         device = getattr(sensor_monitor, 'water_pump_device', None)
         logical_on = bool(getattr(sensor_monitor, 'water_pump_state', False))
         try:
@@ -2235,8 +2754,9 @@ def water_pump_status():
             pass
 
         return jsonify({
-            'status': 'on' if logical_on else 'off',
-            'logical_on': logical_on,
+            **hardware,
+            'status': ('on' if logical_on else 'off') if hardware['hardware_available'] else 'unavailable',
+            'logical_on': logical_on if hardware['hardware_available'] else None,
             'gpio_pin': getattr(sensor_monitor, 'WATER_PUMP_PIN', None),
             'active_low': getattr(sensor_monitor, 'WATER_PUMP_ACTIVE_LOW', None),
             'breaker_pin': getattr(sensor_monitor, 'WATER_PUMP_BREAKER_PIN', None),
@@ -2251,6 +2771,7 @@ def water_pump_status():
 
 
 @app.route('/api/water-pump/auto', methods=['GET', 'POST'])
+@staff_access_required
 def water_pump_auto():
     """Get or toggle automatic (moisture-based) watering."""
     try:
@@ -2273,7 +2794,9 @@ def water_pump_auto():
         if 'enabled' not in payload:
             raise ValueError('enabled (true/false) is required')
 
-        enabled = bool(payload.get('enabled'))
+        enabled = payload.get('enabled')
+        if not isinstance(enabled, bool):
+            raise ValueError('enabled must be true or false, not a string or number')
         settings = _load_auto_pump_settings()
         settings['enabled'] = enabled
         settings['updated_at'] = datetime.now().isoformat()
@@ -2293,6 +2816,7 @@ def water_pump_auto():
 
 
 @app.route('/api/water-pump/schedules', methods=['GET', 'POST'])
+@staff_access_required
 def water_pump_schedules():
     """List or create scheduled watering jobs."""
     try:
@@ -2307,8 +2831,11 @@ def water_pump_schedules():
         name = str(payload.get('name') or 'Scheduled watering').strip()
         schedule_type = str(payload.get('schedule_type') or 'daily').strip().lower()
         time_value = str(payload.get('time') or '06:00').strip()
-        duration_seconds = int(payload.get('duration_seconds') or sensor_monitor.WATER_PUMP_DEFAULT_DURATION)
-        enabled = bool(payload.get('enabled', True))
+        duration_value = payload.get('duration_seconds')
+        duration_seconds = int(duration_value) if duration_value not in (None, '') else sensor_monitor.WATER_PUMP_DEFAULT_DURATION
+        enabled = payload.get('enabled', True)
+        if not isinstance(enabled, bool):
+            raise ValueError('enabled must be true or false')
         days_of_week = _normalize_days_of_week(payload.get('days_of_week', []))
 
         if schedule_type not in ('daily', 'weekly'):
@@ -2317,8 +2844,8 @@ def water_pump_schedules():
         if schedule_type == 'weekly' and not days_of_week:
             raise ValueError('Select at least one day for weekly schedules')
 
-        if duration_seconds < 1:
-            raise ValueError('duration_seconds must be at least 1')
+        if not 1 <= duration_seconds <= sensor_monitor.WATER_PUMP_MAX_DURATION:
+            raise ValueError(f'duration_seconds must be between 1 and {sensor_monitor.WATER_PUMP_MAX_DURATION}')
 
         _parse_schedule_time(time_value)
 
@@ -2354,6 +2881,7 @@ def water_pump_schedules():
 
 
 @app.route('/api/water-pump/schedules/<schedule_id>', methods=['DELETE'])
+@staff_access_required
 def delete_water_pump_schedule(schedule_id):
     """Delete a scheduled watering job."""
     try:
@@ -2375,25 +2903,8 @@ def delete_water_pump_schedule(schedule_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/sensors/temperature-humidity', methods=['GET'])
-def get_temperature_humidity():
-    """Get current temperature and humidity reading"""
-    try:
-        reading = sensor_monitor.read_temperature_humidity()
-        # Save only valid live reading
-        if 'error' not in reading and reading.get('sensor_live', False):
-            sensor_monitor.save_reading('temp_humidity', reading)
-            if firestore_ready():
-                save_sensor_data_firestore(
-                    'temp_humidity',
-                    reading,
-                    user_id=get_current_firebase_user_id()
-                )
-        return jsonify(reading), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/sensors/soil-moisture/diagnose', methods=['GET'])
+@staff_access_required
 def diagnose_soil_moisture():
     """Diagnose soil moisture sensor connectivity"""
     try:
@@ -2402,59 +2913,96 @@ def diagnose_soil_moisture():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/sensors/soil-moisture/history', methods=['GET'])
-def get_soil_moisture_history():
-    """Get soil moisture history"""
+@app.route('/api/sensors/soil-moisture/diagnose/all', methods=['GET'])
+@staff_access_required
+def diagnose_soil_moisture_all():
+    """Diagnose connectivity for every configured soil moisture sensor (all zones)"""
     try:
-        hours = int(request.args.get('hours', 24))
-        readings = sensor_monitor.get_readings('soil_moisture', hours)
-        stats = sensor_monitor.get_statistics('soil_moisture', hours)
-        return jsonify({
-            'readings': readings,
-            'statistics': stats
-        }), 200
+        diagnosis = sensor_monitor.diagnose_all_soil_moisture_sensors()
+        return jsonify(diagnosis), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/sensors/temperature-humidity/history', methods=['GET'])
-def get_temperature_humidity_history():
-    """Get temperature and humidity history"""
+@app.route('/api/sensors/soil-moisture/history', methods=['GET'])
+@staff_access_required
+def get_soil_moisture_history():
+    """Get averaged Arduino soil moisture history."""
     try:
-        hours = int(request.args.get('hours', 24))
-        readings = sensor_monitor.get_readings('temp_humidity', hours)
-        stats = sensor_monitor.get_statistics('temp_humidity', hours)
+        hours = max(1, min(168, int(request.args.get('hours', 24))))
+        readings_by_timestamp = {}
+        for zone_number in range(1, 5):
+            zone_readings = sensor_monitor.get_readings(
+                f'soil_moisture_zone{zone_number}',
+                hours,
+            )
+            for reading in zone_readings:
+                if not _is_recorded_arduino_soil_reading(reading):
+                    continue
+                timestamp = reading.get('timestamp')
+                value = reading.get('value')
+                if timestamp is None or not isinstance(value, (int, float)):
+                    continue
+                readings_by_timestamp.setdefault(timestamp, []).append(reading)
+
+        readings = []
+        for timestamp, zone_readings in sorted(readings_by_timestamp.items()):
+            values = [float(reading['value']) for reading in zone_readings]
+            raw_values = [float(reading.get('raw_value', 0)) for reading in zone_readings]
+            average = round(sum(values) / len(values))
+            status = 'dry' if average <= 30 else 'moist' if average <= 70 else 'wet'
+            readings.append({
+                'timestamp': timestamp,
+                'value': average,
+                'unit': '%',
+                'status': status,
+                'state': status.upper(),
+                'raw_value': round(sum(raw_values) / len(raw_values)),
+                'sensor_mode': 'arduino_analog',
+                'zone_count': len(zone_readings),
+                'alert': status != 'moist',
+            })
+
+        source = 'recorded_history'
+        if not readings:
+            readings = preview_history(hours)
+            source = 'simulated'
+
+        values = [reading['value'] for reading in readings]
+        stats = {
+            'count': len(values),
+            'average': round(sum(values) / len(values), 1) if values else 0,
+            'min': min(values) if values else 0,
+            'max': max(values) if values else 0,
+            'alerts': sum(1 for reading in readings if reading['alert']),
+            'sensor_mode': readings[-1]['sensor_mode'] if readings else 'arduino_analog',
+        }
         return jsonify({
             'readings': readings,
-            'statistics': stats
+            'statistics': stats,
+            'source': source,
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/sensors/all', methods=['GET'])
+@staff_access_required
 def get_all_sensors():
     """Get all sensor readings at once"""
     try:
         soil = sensor_monitor.read_soil_moisture()
-        temp_humid = sensor_monitor.read_temperature_humidity()
-        
+
         # Save readings
         sensor_monitor.save_reading('soil_moisture', soil)
         try:
             sensor_monitor.check_and_notify_all_users()
         except Exception:
             pass
-        sensor_monitor.save_reading('temp_humidity', temp_humid)
 
-        if firestore_ready():
-            user_id = get_current_firebase_user_id()
-            if 'error' not in soil:
-                save_sensor_data_firestore('soil_moisture', soil, user_id=user_id)
-            if 'error' not in temp_humid:
-                save_sensor_data_firestore('temp_humidity', temp_humid, user_id=user_id)
-        
+        if firestore_ready() and 'error' not in soil:
+            save_sensor_data_firestore('soil_moisture', soil, user_id=get_current_firebase_user_id())
+
         return jsonify({
             'soil_moisture': soil,
-            'temperature_humidity': temp_humid,
             'timestamp': datetime.now().isoformat()
         }), 200
     except Exception as e:
@@ -2593,9 +3141,9 @@ def mark_notification_read(notification_id):
         if not firestore_ready():
             return jsonify({'success': False, 'message': 'Firebase is not enabled'}), 503
 
-        updated = mark_notification_read_firestore(notification_id)
+        updated = mark_notification_read_firestore(notification_id, user_id=to_firebase_user_id(request.user_email))
         if not updated:
-            return jsonify({'success': False, 'message': 'Failed to update notification'}), 500
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
 
         return jsonify({'success': True, 'message': 'Notification marked as read'}), 200
     except Exception as e:
@@ -2609,57 +3157,449 @@ def mark_notification_read(notification_id):
 @app.route('/forecast')
 def forecast_page():
     """Render growth and harvest forecast page"""
-    return render_template('forecast.html')
+    blocked = require_staff_page_access()
+    if blocked is not None:
+        return blocked
+    return render_template('forecast.html', monitoring=monitoring_options())
+
+# Plant monitoring records (plots, status logs, problem reports, growth
+# predictions) live in Firestore next to the app's other collections.
+monitoring_store = PlantMonitoringStore(firestore_db)
+problem_recommender = ProblemRecommender(
+    detector=detector,
+    disease_library=DISEASE_LIBRARY,
+    growth_forecaster=growth_forecaster,
+)
+PROBLEM_IMAGE_FOLDER = 'problem_images'
+MAX_PROBLEM_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _forecast_kwargs(source, plant=None):
+    """Read growth-forecast settings from query args or a request body; saved plot settings fill gaps."""
+    plant = plant or {}
+
+    def text(name):
+        return str(source.get(name) or '').strip()
+
+    def optional_int(name):
+        return int(text(name)) if text(name) else None
+
+    def optional_float(name):
+        return float(text(name)) if text(name) else None
+
+    return {
+        'planting_date': text('planting_date') or plant.get('planting_date'),
+        'horizon_days': int(text('horizon_days') or 30),
+        'history_days': int(text('history_days') or 90),
+        'profile': (text('profile') or plant.get('farm_profile') or 'standard').lower(),
+        'cycle_days': optional_int('cycle_days') if text('cycle_days') else plant.get('cycle_days'),
+        'stage_vegetative_end': optional_int('stage_vegetative_end'),
+        'stage_pre_flowering_end': optional_int('stage_pre_flowering_end'),
+        'stage_fruit_development_end': optional_int('stage_fruit_development_end'),
+        'stage_ripening_end': optional_int('stage_ripening_end'),
+        'actual_height_cm': optional_float('actual_height_cm'),
+        'actual_canopy_cm': optional_float('actual_canopy_cm'),
+    }
+
+
+def _monitoring_owner():
+    return get_current_firebase_user_id() or 'anonymous'
+
+
+def _monitoring_error(message, status=400, errors=None):
+    payload = {'success': False, 'message': message, 'error': message}
+    if errors:
+        payload['errors'] = errors
+    return jsonify(payload), status
+
+
+def _load_plant_history(plant_code, owner_id):
+    """Return (plant, status logs, warning) for a plot; a Firestore failure becomes a warning."""
+    plant_code = (plant_code or '').strip()
+    if not plant_code:
+        return None, [], None
+    try:
+        plant = monitoring_store.get_plant(owner_id, plant_code)
+        logs = monitoring_store.list_status_logs(plant['id']) if plant else []
+        return plant, logs, None
+    except MonitoringStoreUnavailable as e:
+        return None, [], str(e)
+    except Exception as e:
+        print(f"⚠️  Could not load status records for {plant_code}: {e}")
+        return None, [], 'Saved status records could not be loaded, so this forecast does not include them.'
+
+
+def _compute_growth_outlook(plant, status_logs, source):
+    """Harvest forecast plus monthly size predictions, both calibrated with the plot's status logs."""
+    forecast_kwargs = _forecast_kwargs(source, plant)
+    sensor_rows, sensor_warning = _load_forecast_sensor_rows(forecast_kwargs['history_days'])
+    forecast = growth_forecaster.forecast_growth_and_harvest(
+        **forecast_kwargs, status_logs=status_logs, sensor_rows=sensor_rows
+    )
+    if sensor_warning:
+        forecast['warnings'].append(sensor_warning)
+    predictions = growth_forecaster.predict_monthly_growth(forecast, status_logs)
+    return forecast, predictions
+
+
+def _latest_soil_sensor_reading():
+    try:
+        readings = sensor_monitor.get_readings('soil_moisture', hours=24)
+    except Exception:
+        return None
+    valid = [r for r in readings if 'error' not in r and r.get('state')]
+    return valid[-1] if valid else None
+
+
+def _problem_image_folder():
+    return os.path.abspath(os.path.join(app.config['UPLOAD_FOLDER'], PROBLEM_IMAGE_FOLDER))
+
+
+def _save_problem_image(file_storage):
+    """Validate and store an optional problem photo. Returns (relative path, error message)."""
+    if not file_storage or not file_storage.filename:
+        return None, None
+
+    filename = secure_filename(file_storage.filename)
+    extension = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        return None, 'Image must be a PNG or JPG file.'
+
+    file_storage.stream.seek(0, os.SEEK_END)
+    size = file_storage.stream.tell()
+    file_storage.stream.seek(0)
+    if size == 0:
+        return None, 'The selected image is empty.'
+    if size > MAX_PROBLEM_IMAGE_BYTES:
+        return None, 'Image must be 10 MB or smaller.'
+
+    folder = _problem_image_folder()
+    os.makedirs(folder, exist_ok=True)
+    stored_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{filename}"
+    path = os.path.join(folder, stored_name)
+    file_storage.save(path)
+    if cv2.imread(path) is None:
+        os.remove(path)
+        return None, 'The uploaded file is not a readable image.'
+    return f'{PROBLEM_IMAGE_FOLDER}/{stored_name}', None
+
+
+def _discard_problem_image(relative_path):
+    if not relative_path:
+        return
+    try:
+        os.remove(os.path.join(_problem_image_folder(), os.path.basename(relative_path)))
+    except OSError:
+        pass
+
 
 @app.route('/api/forecast/growth-harvest', methods=['GET'])
+@staff_access_required
 def get_growth_harvest_forecast():
     """Forecast pineapple growth stage and optimal harvest date."""
     try:
-        planting_date = request.args.get('planting_date', '').strip() or None
-        horizon_days = int(request.args.get('horizon_days', 30))
-        history_days = int(request.args.get('history_days', 90))
-        profile = request.args.get('profile', 'standard').strip().lower()
-        actual_height_cm_raw = request.args.get('actual_height_cm')
-        actual_canopy_cm_raw = request.args.get('actual_canopy_cm')
-
-        cycle_days_raw = request.args.get('cycle_days')
-        stage_vegetative_end_raw = request.args.get('stage_vegetative_end')
-        stage_pre_flowering_end_raw = request.args.get('stage_pre_flowering_end')
-        stage_fruit_development_end_raw = request.args.get('stage_fruit_development_end')
-        stage_ripening_end_raw = request.args.get('stage_ripening_end')
-
-        cycle_days = int(cycle_days_raw) if cycle_days_raw else None
-        stage_vegetative_end = int(stage_vegetative_end_raw) if stage_vegetative_end_raw else None
-        stage_pre_flowering_end = int(stage_pre_flowering_end_raw) if stage_pre_flowering_end_raw else None
-        stage_fruit_development_end = int(stage_fruit_development_end_raw) if stage_fruit_development_end_raw else None
-        stage_ripening_end = int(stage_ripening_end_raw) if stage_ripening_end_raw else None
-        actual_height_cm = float(actual_height_cm_raw) if actual_height_cm_raw not in (None, '') else None
-        actual_canopy_cm = float(actual_canopy_cm_raw) if actual_canopy_cm_raw not in (None, '') else None
-
-        forecast = growth_forecaster.forecast_growth_and_harvest(
-            planting_date=planting_date,
-            horizon_days=horizon_days,
-            history_days=history_days,
-            profile=profile,
-            cycle_days=cycle_days,
-            stage_vegetative_end=stage_vegetative_end,
-            stage_pre_flowering_end=stage_pre_flowering_end,
-            stage_fruit_development_end=stage_fruit_development_end,
-            stage_ripening_end=stage_ripening_end,
-            actual_height_cm=actual_height_cm,
-            actual_canopy_cm=actual_canopy_cm,
+        plant, status_logs, monitoring_warning = _load_plant_history(
+            request.args.get('plant_code'), _monitoring_owner()
         )
+        forecast_kwargs = _forecast_kwargs(request.args, plant)
+        sensor_rows, sensor_warning = _load_forecast_sensor_rows(forecast_kwargs['history_days'])
+        forecast = growth_forecaster.forecast_growth_and_harvest(
+            **forecast_kwargs, status_logs=status_logs, sensor_rows=sensor_rows
+        )
+        if sensor_warning:
+            forecast['warnings'].append(sensor_warning)
+        if plant:
+            forecast['plant'] = plant
+        if monitoring_warning:
+            forecast['warnings'].append(monitoring_warning)
         return jsonify(forecast), 200
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/forecast/plants', methods=['GET'])
+@login_required
+def list_monitored_plants():
+    """List the user's plots and whether Firebase is connected."""
+    payload = {
+        'success': True,
+        'plants': [],
+        'storage':{'provider': 'firebase', 'connected': monitoring_store.available},
+    }
+    try:
+        payload['plants'] = monitoring_store.list_plants(_monitoring_owner())
+    except MonitoringStoreUnavailable as e:
+        payload['storage']['message'] = str(e)
+    except Exception as e:
+        print(f"⚠️  Could not load plots: {e}")
+        payload['storage']['message'] = 'Saved plots could not be loaded from Firebase. Please try again.'
+    return jsonify(payload), 200
+
+
+@app.route('/api/forecast/status', methods=['GET'])
+@login_required
+def get_plant_status():
+    """Latest status (current condition) and full status history for a plot."""
+    plant_code = (request.args.get('plant_code') or '').strip()
+    if not plant_code:
+        return _monitoring_error('Plant/Plot ID is required.', 400, {'plant_code': 'Plant/Plot ID is required.'})
+    try:
+        plant = monitoring_store.get_plant(_monitoring_owner(), plant_code)
+        logs = monitoring_store.list_status_logs(plant['id']) if plant else []
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not load status records: {e}")
+        return _monitoring_error('Status records could not be loaded from Firebase. Please try again.', 500)
+
+    history = list(reversed(logs))
+    limit = max(1, min(500, request.args.get('limit', default=200, type=int)))
+    return jsonify({
+        'success': True,
+        'plant': plant,
+        'latest': history[0] if history else None,
+        'history': history[:limit],
+        'total': len(history),
+    }), 200
+
+
+@app.route('/api/forecast/status', methods=['POST'])
+@login_required
+def save_plant_status():
+    """Save a new status record (earlier records are kept), then recalculate the forecast."""
+    data = request.get_json(silent=True) or {}
+    try:
+        plant_fields, status_fields = validate_status_submission(data)
+    except MonitoringValidationError as e:
+        return _monitoring_error(str(e), 400, e.errors)
+
+    try:
+        plant, plant_created = monitoring_store.upsert_plant(_monitoring_owner(), plant_fields)
+        record = monitoring_store.add_status_log(plant, status_fields)
+        logs = monitoring_store.list_status_logs(plant['id'])
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not save status record: {e}")
+        return _monitoring_error('The status record could not be saved to Firebase. Please try again.', 500)
+
+    response = {
+        'success': True,
+        'message': 'Current pineapple status saved successfully.',
+        'record': record,
+        'latest': logs[-1] if logs else record,
+        'plant': plant,
+        'plant_created': plant_created,
+        'total': len(logs),
+    }
+    # Recalculate the harvest forecast and monthly predictions with the new record.
+    try:
+        forecast, predictions = _compute_growth_outlook(plant, logs, data)
+        monitoring_store.save_prediction_snapshot(plant, predictions['prediction_date'], predictions['months'])
+        response['forecast_summary'] = forecast['summary']
+        response['predictions_saved'] = len(predictions['months'])
+    except Exception as e:
+        print(f"⚠️  Forecast recalculation failed after saving status: {e}")
+        response['recalculation_warning'] = f'Status saved, but the forecast could not be recalculated: {e}'
+    return jsonify(response), 201
+
+
+@app.route('/api/forecast/problems', methods=['POST'])
+@login_required
+def log_plant_problem():
+    """Save a plant problem report together with a generated recommendation."""
+    data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+    try:
+        plant_fields, problem_fields = validate_problem_submission(data)
+    except MonitoringValidationError as e:
+        return _monitoring_error(str(e), 400, e.errors)
+
+    if not monitoring_store.available:
+        return _monitoring_error(STORE_UNAVAILABLE_MESSAGE, 503)
+
+    image_path, image_error = _save_problem_image(request.files.get('image'))
+    if image_error:
+        return _monitoring_error(image_error, 400, {'image': image_error})
+
+    try:
+        plant, _ = monitoring_store.upsert_plant(_monitoring_owner(), plant_fields)
+        logs = monitoring_store.list_status_logs(plant['id'])
+        recommendation = problem_recommender.recommend(
+            problem_fields,
+            latest_status=logs[-1] if logs else None,
+            image_path=os.path.join(_problem_image_folder(), os.path.basename(image_path)) if image_path else None,
+            sensor_reading=_latest_soil_sensor_reading(),
+            planting_date=plant.get('planting_date'),
+        )
+        record = monitoring_store.add_problem_log(plant, problem_fields, image_path, recommendation)
+    except MonitoringStoreUnavailable as e:
+        _discard_problem_image(image_path)
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not log plant problem: {e}")
+        _discard_problem_image(image_path)
+        return _monitoring_error('The problem report could not be saved. Please try again.', 500)
+
+    return jsonify({
+        'success': True,
+        'message': 'Plant problem logged successfully. Recommendation generated successfully.',
+        'record': record,
+    }), 201
+
+
+@app.route('/api/forecast/problems', methods=['GET'])
+@login_required
+def list_plant_problems():
+    """Problem & recommendation history (all plots, or one plot with ?plant_code=)."""
+    owner = _monitoring_owner()
+    plant_code = (request.args.get('plant_code') or '').strip()
+    limit = max(1, min(500, request.args.get('limit', default=200, type=int)))
+    try:
+        plant_id = None
+        if plant_code:
+            plant = monitoring_store.get_plant(owner, plant_code)
+            if plant is None:
+                return jsonify({'success': True, 'problems': [], 'total': 0}), 200
+            plant_id = plant['id']
+        problems = monitoring_store.list_problem_logs(owner, plant_id=plant_id, limit=limit)
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not load problem history: {e}")
+        return _monitoring_error('Problem history could not be loaded from Firebase. Please try again.', 500)
+    return jsonify({'success': True, 'problems': problems, 'total': len(problems)}), 200
+
+
+@app.route('/api/forecast/problems/<problem_id>', methods=['GET'])
+@login_required
+def get_plant_problem(problem_id):
+    try:
+        problem = monitoring_store.get_problem_log(_monitoring_owner(), problem_id)
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not load problem {problem_id}: {e}")
+        return _monitoring_error('The problem record could not be loaded. Please try again.', 500)
+    if problem is None:
+        return _monitoring_error('Problem record not found.', 404)
+    return jsonify({'success': True, 'record': problem}), 200
+
+
+@app.route('/api/forecast/problems/<problem_id>', methods=['PATCH'])
+@login_required
+def update_plant_problem_status(problem_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        status = validate_problem_status(data)
+    except MonitoringValidationError as e:
+        return _monitoring_error(str(e), 400, e.errors)
+    try:
+        problem = monitoring_store.update_problem_status(_monitoring_owner(), problem_id, status)
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not update problem {problem_id}: {e}")
+        return _monitoring_error('The problem status could not be updated. Please try again.', 500)
+    if problem is None:
+        return _monitoring_error('Problem record not found.', 404)
+    return jsonify({'success': True, 'message': f'Problem status updated to {status}.', 'record': problem}), 200
+
+
+@app.route('/api/forecast/problems/<problem_id>/image', methods=['GET'])
+@login_required
+def get_plant_problem_image(problem_id):
+    try:
+        problem = monitoring_store.get_problem_log(_monitoring_owner(), problem_id)
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    if not problem or not problem.get('image_path'):
+        return _monitoring_error('Image not found.', 404)
+    filename = os.path.basename(problem['image_path'])
+    if not os.path.exists(os.path.join(_problem_image_folder(), filename)):
+        return _monitoring_error('Image file is missing on the server.', 404)
+    return send_from_directory(_problem_image_folder(), filename)
+
+
+@app.route('/api/forecast/growth-predictions', methods=['GET'])
+@login_required
+def get_growth_predictions():
+    """Monthly plant height / fruit size predictions, calibrated with the plot's status records.
+
+    Pass persist=1 to store the result as today's prediction snapshot.
+    """
+    plant, status_logs, warning = _load_plant_history(request.args.get('plant_code'), _monitoring_owner())
+    try:
+        forecast, predictions = _compute_growth_outlook(plant, status_logs, request.args)
+    except ValueError as e:
+        return _monitoring_error(str(e), 400)
+    except Exception as e:
+        print(f"❌ Could not generate growth predictions: {e}")
+        return _monitoring_error(f'Predictions could not be generated: {e}', 500)
+
+    saved = 0
+    if plant and request.args.get('persist') == '1':
+        try:
+            saved = monitoring_store.save_prediction_snapshot(
+                plant, predictions['prediction_date'], predictions['months']
+            )
+        except Exception as e:
+            print(f"⚠️  Could not save growth predictions: {e}")
+            warning = 'Predictions were generated but could not be saved to Firebase.'
+
+    return jsonify({
+        'success': True,
+        'plant': plant,
+        'predictions': predictions,
+        'forecast_summary': forecast['summary'],
+        'predictions_saved': saved,
+        'warning': warning,
+    }), 200
+
+
+@app.route('/api/admin/forecast', methods=['GET'])
+@admin_required
+def get_admin_forecast():
+    """Return saved forecast results for a user to the Super Admin view."""
+    if request.current_user.get('role') != 'super_admin':
+        return jsonify({'error': 'Super Admin access required.'}), 403
+
+    owner_email = (request.args.get('email') or 'agripinyaa@gmail.com').strip().lower()
+    owner_id = to_firebase_user_id(owner_email)
+    if not owner_id:
+        return jsonify({'error': 'A valid account email is required.'}), 400
+
+    try:
+        plants = monitoring_store.list_plants(owner_id)
+        forecasts = []
+        for plant in plants:
+            logs = monitoring_store.list_status_logs(plant['id'])
+            forecast, predictions = _compute_growth_outlook(plant, logs, {})
+            forecasts.append({
+                'plant': plant,
+                'summary': forecast.get('summary', {}),
+                'warnings': forecast.get('warnings', []),
+                'predictions': predictions.get('months', []),
+            })
+        return jsonify({
+            'success': True,
+            'email': owner_email,
+            'forecasts': forecasts,
+            'storage': {'provider': 'firebase', 'connected': monitoring_store.available},
+        }), 200
+    except MonitoringStoreUnavailable as e:
+        return _monitoring_error(str(e), 503)
+    except Exception as e:
+        print(f"❌ Could not load admin forecast: {e}")
+        return _monitoring_error('Forecast results could not be loaded from Firebase.', 500)
+
 # ============================================
 # NEW FEATURES: BATCH, TRENDS, EXPORT, WEATHER, SPREAD RISK
 # ============================================
 
 @app.route('/api/detect-batch', methods=['POST'])
+@staff_access_required
 def detect_batch():
     """Process multiple image uploads for batch detection"""
     try:
@@ -2680,7 +3620,7 @@ def detect_batch():
             if file.filename == '':
                 continue
             
-            if not allowed_file(file.filename):
+            if '.' not in file.filename or file.filename.rsplit('.', 1)[1].lower() not in ALLOWED_IMAGE_EXTENSIONS:
                 errors.append(f'{file.filename}: Invalid file type')
                 continue
             
@@ -2693,15 +3633,17 @@ def detect_batch():
                 
                 # Detect disease
                 detection_result = detector.detect(filepath)
+                if detection_result.get('error') or detection_result.get('not_pineapple'):
+                    errors.append(f'{file.filename}: {detection_result.get("error", "Not a pineapple image")}')
+                    continue
                 detection_result['timestamp'] = datetime.now().isoformat()
+                detection_result['image_path'] = unique_filename
                 detection_result['media_path'] = unique_filename
                 detection_result['media_type'] = 'image'
                 if farm:
                     detection_result['farm'] = farm
                 
-                # Save to Firebase
-                if firestore_ready():
-                    save_detection_result_firestore(detection_result, user_id=user_id)
+                _persist_detection_result(detection_result)
                 
                 results.append(detection_result)
                 
@@ -2719,6 +3661,7 @@ def detect_batch():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/detect-video', methods=['POST'])
+@staff_access_required
 def detect_video():
     """Process video upload and extract frames for detection"""
     try:
@@ -2760,8 +3703,7 @@ def detect_video():
         if farm:
             aggregated['farm'] = farm
         
-        if firestore_ready():
-            save_detection_result_firestore(aggregated, user_id=user_id)
+        _persist_detection_result(aggregated)
         
         return jsonify(aggregated), 200
         
@@ -2769,6 +3711,7 @@ def detect_video():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/trends', methods=['GET'])
+@staff_access_required
 def get_trends():
     """Get historical trend analysis"""
     try:
@@ -2793,6 +3736,7 @@ def get_trends():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/export/csv', methods=['GET'])
+@staff_access_required
 def export_csv():
     """Export detection history as CSV"""
     try:
@@ -2812,6 +3756,7 @@ def export_csv():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/export/pdf', methods=['GET'])
+@staff_access_required
 def export_pdf():
     """Export detection history as PDF report"""
     try:
@@ -2837,33 +3782,28 @@ def export_pdf():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/weather-recommendations', methods=['GET'])
+@staff_access_required
 def get_weather_based_recommendations():
-    """Get disease recommendations based on current weather"""
-    try:
-        # Get latest sensor data
-        latest_data = sensor_monitor.read_sensor_data()
-        
-        if not latest_data or 'temp_humidity' not in latest_data:
-            return jsonify({'message': 'No sensor data available'}), 204
-        
-        temp_humidity = latest_data['temp_humidity']
-        temp = temp_humidity.get('temperature')
-        humidity = temp_humidity.get('humidity')
-        
-        if temp is None or humidity is None:
-            return jsonify({'message': 'Incomplete sensor data'}), 204
-        
-        recommendations = get_weather_recommendations(temp, humidity)
-        recommendations['current_temperature'] = temp
-        recommendations['current_humidity'] = humidity
-        recommendations['timestamp'] = datetime.now().isoformat()
-        
-        return jsonify(recommendations), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    """Use recorded live readings; unavailable weather is not an internal error."""
+    readings = sensor_monitor.get_readings('temp_humidity', hours=1)
+    for reading in reversed(readings):
+        if not reading.get('sensor_live') or reading.get('error'):
+            continue
+        temp = reading.get('temperature')
+        humidity = reading.get('humidity')
+        temp = temp.get('value') if isinstance(temp, dict) else temp
+        humidity = humidity.get('value') if isinstance(humidity, dict) else humidity
+        if (isinstance(temp, (int, float)) and isinstance(humidity, (int, float))
+                and math.isfinite(temp) and math.isfinite(humidity)):
+            recommendations = get_weather_recommendations(temp, humidity)
+            recommendations.update(current_temperature=temp, current_humidity=humidity,
+                                   timestamp=reading.get('timestamp'), available=True)
+            return jsonify(recommendations), 200
+    return jsonify({'available': False, 'message': 'No recent live temperature and humidity readings.',
+                    'actions': [], 'warnings': []}), 200
 
 @app.route('/api/disease-spread-risk', methods=['GET'])
+@staff_access_required
 def get_disease_spread_risk():
     """Calculate disease spread risk based on detection history"""
     try:
@@ -2910,5 +3850,12 @@ if __name__ == '__main__':
     else:
         ssl_context = None
         print('🌐 HTTP mode enabled for local laptop access')
+
+    if firestore_ready():
+        for user_email in load_users():
+            try:
+                sync_user_firestore(user_email)
+            except Exception as firestore_error:
+                print(f'⚠️ Unable to sync existing user {user_email} to Firestore: {firestore_error}')
 
     app.run(debug=False, use_reloader=False, host='0.0.0.0', port=port, ssl_context=ssl_context)

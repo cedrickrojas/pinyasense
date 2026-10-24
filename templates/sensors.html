@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
     <title>Sensors - AgriPinya</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -66,6 +67,52 @@
         
         .sensor-reading {
             margin: 20px 0;
+        }
+
+        .soil-current-summary {
+            min-height: 460px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-around;
+            text-align: center;
+            padding: 12px 0;
+        }
+
+        .soil-current-summary h2 {
+            margin: 0;
+            color: var(--dark-color);
+            font-size: 1.8rem;
+        }
+
+        .soil-current-value {
+            color: var(--dark-color);
+            font-size: 5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .soil-current-value span {
+            color: #4b5563;
+            font-size: 2.4rem;
+        }
+
+        .soil-current-status {
+            min-width: 205px;
+            padding: 20px 28px;
+            color: white;
+            font-size: 1.4rem;
+            font-weight: 700;
+        }
+
+        .soil-current-status.status-optimal { background: #10b981; }
+        .soil-current-status.status-warning { background: #f59e0b; }
+        .soil-current-status.status-danger { background: #ef4444; }
+
+        .soil-current-source {
+            margin: 0;
+            color: #64748b;
+            font-size: 1.1rem;
         }
         
         .reading-value {
@@ -257,19 +304,12 @@
                 <i class="fas fa-leaf"></i>
                 <span data-i18n="brand">AgriPinya</span>
             </a>
-            <div class="language-selector">
-                <select id="languageSelect" onchange="changeLanguage()">
-                    <option value="en">English</option>
-                    <option value="tl">Tagalog</option>
-                    <option value="es">Español</option>
-                </select>
-            </div>
         </div>
         <ul class="sidebar-menu">
             <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
             <li><a href="/sensors" class="active"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
             <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
-            <li><a href="/sensors/water-pump"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <li><a href="/sensors/water-pump"><i class="fas fa-faucet"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
             <div class="sidebar-section">Agriculture</div>
             <li><a href="/forecast"><i class="fas fa-chart-line"></i> Forecast</a></li>
             <li><a href="/diseases"><i class="fas fa-virus"></i> Diseases</a></li>
@@ -294,15 +334,6 @@
         <div class="sensors-grid">
             <!-- Soil Moisture Card -->
             <div class="sensor-card" onclick="window.location.href='/sensors/soil-moisture'">
-                <div class="sensor-header">
-                    <div class="sensor-icon" style="background: linear-gradient(135deg, #8e44ad, #9b59b6);">
-                        <i class="fas fa-tint"></i>
-                    </div>
-                    <div class="sensor-info">
-                        <h3>Soil Moisture</h3>
-                        <p>Soil Moisture Level</p>
-                    </div>
-                </div>
                 <div id="soil-moisture-content" class="loading">
                     <i class="fas fa-spinner fa-spin"></i> Loading...
                 </div>
@@ -312,7 +343,7 @@
             <div class="sensor-card" onclick="window.location.href='/sensors/water-pump'">
                 <div class="sensor-header">
                     <div class="sensor-icon" style="background: linear-gradient(135deg, #16a34a, #22c55e);">
-                        <i class="fas fa-faucet-drip"></i>
+                        <i class="fas fa-faucet"></i>
                     </div>
                     <div class="sensor-info">
                         <h3 data-i18n="water_pump">Water Pump</h3>
@@ -391,8 +422,30 @@
 
         function loadSoilMoisture() {
             const container = document.getElementById('soil-moisture-content');
-            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+            if (!container.querySelector('.soil-current-summary')) {
+                container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+            }
 
+            fetch('/api/sensors/soil-moisture/arduino-zones', { cache: 'no-store' })
+                .then(response => response.json())
+                .then(zoneData => {
+                    const zones = Array.isArray(zoneData.zones)
+                        ? zoneData.zones.filter(zone => zone && typeof zone.value === 'number' && Number.isFinite(zone.value) && !zone.error)
+                        : [];
+
+                    if (zones.length) {
+                        const average = Number((zones.reduce((total, zone) => total + zone.value, 0) / zones.length).toFixed(1));
+                        const status = average <= 30 ? 'dry' : average <= 70 ? 'moist' : 'wet';
+                        renderCurrentSoilMoisture(container, average, status, `Average across ${zones.length} zones`);
+                        return;
+                    }
+
+                    loadSingleSoilMoisture(container);
+                })
+                .catch(() => loadSingleSoilMoisture(container));
+        }
+
+        function loadSingleSoilMoisture(container) {
             fetch('/api/sensors/soil-moisture')
                 .then(response => response.json())
                 .then(data => {
@@ -401,7 +454,7 @@
                         const errorClass = isDisconnected ? 'sensor-disconnected' : '';
                         const icon = isDisconnected ? 'fa-plug' : 'fa-exclamation-circle';
                         const title = isDisconnected ? 'Sensor Not Connected' : 'Sensor Error';
-                        
+
                         container.innerHTML = `
                             <div class="error ${errorClass}">
                                 <i class="fas ${icon}"></i>
@@ -416,6 +469,10 @@
 
                     const statusClass = data.status === 'optimal' ? 'status-optimal' : 
                                        data.status === 'dry' ? 'status-danger' : 'status-warning';
+                    if (data.sensor_mode !== 'digital_do' && data.unit === '%') {
+                        renderCurrentSoilMoisture(container, data.value, data.status, data.recommendation || 'Current sensor reading');
+                        return;
+                    }
                     const alertBadge = data.alert ? '<span class="alert-badge"><i class="fas fa-exclamation-triangle"></i> Alert</span>' : '';
                     const readingLabel = data.sensor_mode === 'digital_do'
                         ? `${data.state}`
@@ -450,6 +507,24 @@
                         </div>
                     `;
                 });
+        }
+
+        function renderCurrentSoilMoisture(container, value, status, source) {
+            const isDry = status === 'dry';
+            const isMoist = status === 'optimal' || status === 'moist';
+            const statusClass = isDry ? 'status-danger' : isMoist ? 'status-optimal' : 'status-warning';
+            const statusLabel = isDry ? 'TOO DRY' : isMoist ? 'MOIST' : 'TOO WET';
+
+            container.innerHTML = `
+                <div class="soil-current-summary">
+                    <h2>Current Soil Moisture</h2>
+                    <div class="soil-current-value">${Number(value).toFixed(1)}<span>%</span></div>
+                    <div class="soil-current-status ${statusClass}">
+                        <i class="fas fa-${isMoist ? 'check-circle' : 'exclamation-triangle'}"></i> ${statusLabel}
+                    </div>
+                    <p class="soil-current-source"><i class="fas fa-lightbulb"></i> ${source}</p>
+                </div>
+            `;
         }
 
         // Auto-refresh every 5 seconds

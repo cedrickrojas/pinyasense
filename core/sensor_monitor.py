@@ -9,8 +9,9 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import random
-import json
 from pathlib import Path
+from threading import Lock, RLock
+from core.json_storage import write_json_atomic
 
 from . import notification_service
 from .email_service import send_email_notification
@@ -67,51 +68,55 @@ except ImportError:
     GPIOZERO_AVAILABLE = False
     print("⚠️  gpiozero not available")
 
-# Try to import DHT sensor library
-try:
-    import Adafruit_DHT
-    DHT_AVAILABLE = True
-except ImportError:
-    DHT_AVAILABLE = False
-    print("⚠️  Adafruit_DHT not available")
-
-# Try CircuitPython DHT backend (works on newer Raspberry Pi models)
-try:
-    import adafruit_dht
-    from adafruit_blinka.microcontroller.bcm283x import pin as blinka_pin
-    DHT_CIRCUITPY_AVAILABLE = True
-    print("✅ CircuitPython DHT backend available")
-except ImportError:
-    DHT_CIRCUITPY_AVAILABLE = False
-    print("⚠️  CircuitPython DHT backend not available")
-
-
 class SensorMonitor:
     """Monitor and manage sensor readings"""
     
     def __init__(self, data_folder='sensor_data'):
         """Initialize sensor monitor"""
-        self.data_folder = data_folder
+        self._reading_lock = RLock()
+        self._pump_run_lock = Lock()
+        if os.path.isabs(data_folder):
+            self.data_folder = data_folder
+        else:
+            project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.data_folder = os.path.join(project_folder, data_folder)
         os.makedirs(self.data_folder, exist_ok=True)
         
         # GPIO Pin Configuration
-        self.SOIL_MOISTURE_PIN = int(os.getenv('SOIL_MOISTURE_PIN', '17'))
+        # Multiple capacitive soil moisture sensors are supported (one per zone).
+        # Default wiring: 4 sensors on GPIO 22, 23, 24, 25.
+        # Override with SOIL_MOISTURE_PINS="22,23,24,25" (comma-separated) if wired differently.
+        soil_pins_raw = os.getenv('SOIL_MOISTURE_PINS', '').strip()
+        if soil_pins_raw:
+            self.SOIL_MOISTURE_PINS = [int(p.strip()) for p in soil_pins_raw.split(',') if p.strip()]
+        else:
+            self.SOIL_MOISTURE_PINS = [22, 23, 24, 25]
+        # Primary/legacy single-sensor pin (zone 1) - kept for backward compatibility
+        # with code paths that only deal with one soil sensor.
+        self.SOIL_MOISTURE_PIN = int(os.getenv('SOIL_MOISTURE_PIN', str(self.SOIL_MOISTURE_PINS[0])))
         self.SOIL_MOISTURE_ADC_CHANNEL = 0
-        self.DHT_PIN = int(os.getenv('DHT_PIN', '4'))  # default GPIO 4 (Physical Pin 7)
-        self.DHT_SENSOR = Adafruit_DHT.DHT22 if DHT_AVAILABLE else None
-        self.dht_device = None
         self.soil_sensor_device = None
+        # Per-pin gpiozero device cache, keyed by GPIO pin number, so multiple
+        # soil sensors on different pins don't clobber each other.
+        self.soil_sensor_devices = {}
         self.water_pump_device = None
         self.water_pump_breaker_device = None
         # Supported values: digital_do, analog_adc
         self.SOIL_SENSOR_MODE = os.getenv('SOIL_SENSOR_MODE', 'digital_do').strip().lower()
+        # Policy for deciding whether to water based on multiple zones:
+        # 'any' (default) = water if any zone is dry, 'all' = only if every zone is dry,
+        # 'majority' = water if more than half of zones are dry.
+        self.SOIL_ZONE_WATER_POLICY = os.getenv('SOIL_ZONE_WATER_POLICY', 'any').strip().lower()
 
         # Water pump / relay configuration.
-        # Default is GPIO27 to keep the relay on the requested pin and avoid
-        # conflict with the default soil pin (GPIO17) and default DHT pin (GPIO4).
+        # Default is GPIO27 to keep the relay clear of the soil sensor pins (22-25).
         self.WATER_PUMP_PIN = int(os.getenv('WATER_PUMP_PIN', '27'))
         self.WATER_PUMP_ACTIVE_LOW = os.getenv('WATER_PUMP_ACTIVE_LOW', '0').strip().lower() in ('1', 'true', 'yes', 'on')
         self.WATER_PUMP_DEFAULT_DURATION = int(os.getenv('WATER_PUMP_DEFAULT_DURATION', '5'))
+        try:
+            self.WATER_PUMP_MAX_DURATION = max(1, int(os.getenv('WATER_PUMP_MAX_DURATION_SECONDS', '300')))
+        except ValueError:
+            self.WATER_PUMP_MAX_DURATION = 300
         breaker_pin_raw = os.getenv('WATER_PUMP_BREAKER_PIN', '').strip()
         self.WATER_PUMP_BREAKER_PIN = int(breaker_pin_raw) if breaker_pin_raw else None
         self.WATER_PUMP_BREAKER_ACTIVE_LOW = os.getenv('WATER_PUMP_BREAKER_ACTIVE_LOW', '1').strip().lower() in ('1', 'true', 'yes', 'on')
@@ -122,16 +127,16 @@ class SensorMonitor:
         self.water_pump_rearm_required = False
         self._last_water_pump_breaker_on = None
 
-        if self.WATER_PUMP_PIN == self.SOIL_MOISTURE_PIN:
+        if len(set(self.SOIL_MOISTURE_PINS)) != len(self.SOIL_MOISTURE_PINS):
             print(
-                f"⚠️  Water pump and soil moisture sensor are both assigned to GPIO {self.WATER_PUMP_PIN}. "
-                "Set WATER_PUMP_PIN or SOIL_MOISTURE_PIN to different GPIO pins."
+                f"⚠️  Duplicate GPIO pins in SOIL_MOISTURE_PINS: {self.SOIL_MOISTURE_PINS}. "
+                "Each soil sensor should be on its own GPIO pin."
             )
 
-        if self.WATER_PUMP_PIN == self.DHT_PIN:
+        if self.WATER_PUMP_PIN in self.SOIL_MOISTURE_PINS:
             print(
-                f"⚠️  Water pump relay and DHT sensor are both assigned to GPIO {self.WATER_PUMP_PIN}. "
-                "Set WATER_PUMP_PIN or DHT_PIN to different GPIO pins."
+                f"⚠️  Water pump and a soil moisture sensor are both assigned to GPIO {self.WATER_PUMP_PIN}. "
+                "Set WATER_PUMP_PIN or SOIL_MOISTURE_PINS to different GPIO pins."
             )
 
         if self.WATER_PUMP_BREAKER_PIN is not None:
@@ -140,15 +145,11 @@ class SensorMonitor:
                     f"⚠️  Water pump breaker and relay are both assigned to GPIO {self.WATER_PUMP_BREAKER_PIN}. "
                     "Set WATER_PUMP_BREAKER_PIN to a different GPIO pin."
                 )
-            if self.WATER_PUMP_BREAKER_PIN == self.SOIL_MOISTURE_PIN:
+            if self.WATER_PUMP_BREAKER_PIN in self.SOIL_MOISTURE_PINS:
                 print(
-                    f"⚠️  Water pump breaker and soil moisture sensor are both assigned to GPIO {self.WATER_PUMP_BREAKER_PIN}. "
-                    "Set WATER_PUMP_BREAKER_PIN or SOIL_MOISTURE_PIN to different GPIO pins."
+                    f"⚠️  Water pump breaker and a soil moisture sensor are both assigned to GPIO {self.WATER_PUMP_BREAKER_PIN}. "
+                    "Set WATER_PUMP_BREAKER_PIN or SOIL_MOISTURE_PINS to different GPIO pins."
                 )
-        
-        # Allow simulating temperature/humidity when hardware or libraries are missing
-        # Developers can enable with env `TEMP_HUMIDITY_SIMULATION=1` but default is off.
-        self.ALLOW_TH_SIMULATION = os.getenv('TEMP_HUMIDITY_SIMULATION', '0').strip().lower() == '1'
         
         # Sensor connection verification mode
         # Set STRICT_SENSOR_CHECK=1 to enforce hardware verification
@@ -173,20 +174,18 @@ class SensorMonitor:
             'adc_max': 1023
         }
         
-        self.TEMP_THRESHOLDS = {
-            'too_cold': 20,
-            'optimal_min': 25,
-            'optimal_max': 32,
-            'too_hot': 35
-        }
-        
-        self.HUMIDITY_THRESHOLDS = {
-            'too_dry': 40,
-            'optimal_min': 60,
-            'optimal_max': 80,
-            'too_humid': 90
-        }
-    
+    def _get_soil_sensor_device(self, gpio_pin: int):
+        """Get (or lazily create) the gpiozero DigitalInputDevice for a given soil sensor pin.
+
+        Cached per-pin so multiple soil sensors on different GPIOs can be read
+        independently without clobbering each other's device handle.
+        """
+        device = self.soil_sensor_devices.get(gpio_pin)
+        if device is None:
+            device = DigitalInputDevice(gpio_pin)
+            self.soil_sensor_devices[gpio_pin] = device
+        return device
+
     def _check_sensor_connection(self, gpio_pin: int, num_reads: int = 5) -> bool:
         """
         Check if soil moisture sensor is properly connected by reading multiple times.
@@ -242,10 +241,9 @@ class SensorMonitor:
 
             elif GPIOZERO_AVAILABLE:
                 readings = []
+                device = self._get_soil_sensor_device(gpio_pin)
                 for _ in range(num_reads):
-                    if self.soil_sensor_device is None:
-                        self.soil_sensor_device = DigitalInputDevice(gpio_pin)
-                    readings.append(1 if self.soil_sensor_device.value else 0)
+                    readings.append(1 if device.value else 0)
                 if len(set(readings)) == 1:
                     print(f"✅ gpiozero stable readings on GPIO {gpio_pin}: {readings}")
                     return True
@@ -375,17 +373,10 @@ class SensorMonitor:
 
     def _validate_pump_pin_assignment(self) -> Optional[str]:
         """Return an error message when pump GPIO assignments are unsafe."""
-        if self.WATER_PUMP_PIN == self.SOIL_MOISTURE_PIN:
+        if self.WATER_PUMP_PIN in self.SOIL_MOISTURE_PINS:
             return (
                 f'Invalid pin assignment: WATER_PUMP_PIN ({self.WATER_PUMP_PIN}) '
-                f'matches SOIL_MOISTURE_PIN ({self.SOIL_MOISTURE_PIN}). '
-                'Assign different GPIO pins before turning on the pump.'
-            )
-
-        if self.WATER_PUMP_PIN == self.DHT_PIN:
-            return (
-                f'Invalid pin assignment: WATER_PUMP_PIN ({self.WATER_PUMP_PIN}) '
-                f'matches DHT_PIN ({self.DHT_PIN}). '
+                f'matches one of SOIL_MOISTURE_PINS ({self.SOIL_MOISTURE_PINS}). '
                 'Assign different GPIO pins before turning on the pump.'
             )
 
@@ -398,6 +389,27 @@ class SensorMonitor:
 
         return None
 
+    def get_water_pump_hardware_status(self) -> Dict:
+        """Check backend access without claiming a relay pin or switching outputs."""
+        if GPIOZERO_AVAILABLE:
+            try:
+                Device.ensure_pin_factory()
+                if type(Device.pin_factory).__module__ == 'gpiozero.pins.mock':
+                    return {'hardware_available': False, 'backend': None,
+                            'hardware_message': 'Mock GPIO cannot control the physical water pump.'}
+                return {'hardware_available': True, 'backend': 'gpiozero', 'hardware_message': ''}
+            except Exception as error:
+                return {'hardware_available': False, 'backend': None,
+                        'hardware_message': f'GPIO access failed: {error}. Check the Pi GPIO packages and permissions.'}
+        if GPIO_AVAILABLE:
+            return {'hardware_available': True, 'backend': 'RPi.GPIO', 'hardware_message': ''}
+        message = (
+            'Pump controller connection is not configured. Set PUMP_REMOTE_URL and PUMP_BRIDGE_TOKEN.'
+            if os.name == 'nt' else
+            'No GPIO backend is installed. Install gpiozero and lgpio in the Raspberry Pi app virtual environment, then restart the app.'
+        )
+        return {'hardware_available': False, 'backend': None, 'hardware_message': message}
+
     def set_water_pump(self, enabled: bool) -> Dict:
         """Turn the water pump on or off."""
         try:
@@ -409,14 +421,16 @@ class SensorMonitor:
                     'status': 'blocked',
                     'gpio_pin': self.WATER_PUMP_PIN,
                     'soil_moisture_pin': self.SOIL_MOISTURE_PIN,
-                    'dht_pin': self.DHT_PIN,
                     'breaker_pin': self.WATER_PUMP_BREAKER_PIN,
                     'timestamp': datetime.now().isoformat(),
                 }
 
-            if not GPIO_AVAILABLE and not GPIOZERO_AVAILABLE:
+            hardware = self.get_water_pump_hardware_status()
+            if not hardware['hardware_available']:
                 return {
-                    'error': 'GPIO backend unavailable. Unable to control water pump.',
+                    **hardware,
+                    'error': hardware['hardware_message'],
+                    'status': 'unavailable',
                     'gpio_pin': self.WATER_PUMP_PIN,
                     'timestamp': datetime.now().isoformat(),
                 }
@@ -483,31 +497,46 @@ class SensorMonitor:
         return self.set_water_pump(False)
 
     def run_water_pump_for_seconds(self, duration_seconds: Optional[int] = None) -> Dict:
-        """Run the pump for a fixed number of seconds, then stop it."""
-        run_seconds = self.WATER_PUMP_DEFAULT_DURATION if duration_seconds is None else max(1, int(duration_seconds))
+        """Run one timed watering operation at a time and always attempt to stop."""
+        try:
+            run_seconds = self.WATER_PUMP_DEFAULT_DURATION if duration_seconds is None else int(duration_seconds)
+        except (TypeError, ValueError):
+            return {'error': 'Invalid pump duration', 'status': 'blocked'}
+        if not 1 <= run_seconds <= self.WATER_PUMP_MAX_DURATION:
+            return {'error': f'Pump duration must be between 1 and {self.WATER_PUMP_MAX_DURATION} seconds', 'status': 'blocked'}
+        if not self._pump_run_lock.acquire(blocking=False):
+            return {'error': 'A timed watering operation is already running', 'status': 'blocked'}
+        try:
+            start_result = self.water_pump_on()
+            if start_result.get('error'):
+                return start_result
+            try:
+                time.sleep(run_seconds)
+            finally:
+                stop_result = self.water_pump_off()
+            result = {
+                'status': 'completed', 'gpio_pin': self.WATER_PUMP_PIN,
+                'duration_seconds': run_seconds, 'start': start_result, 'stop': stop_result,
+                'breaker_pin': self.WATER_PUMP_BREAKER_PIN,
+                'rearm_required': self.water_pump_rearm_required,
+                'timestamp': datetime.now().isoformat(),
+            }
+            if stop_result.get('error'):
+                result.update(status='error', error=stop_result['error'])
+            return result
+        finally:
+            self._pump_run_lock.release()
 
-        start_result = self.water_pump_on()
-        if start_result.get('error'):
-            return start_result
+    def read_soil_moisture(self, gpio_pin: Optional[int] = None, zone: Optional[int] = None) -> Dict:
+        """Read a soil moisture sensor (Digital DO pin).
 
-        time.sleep(run_seconds)
-        stop_result = self.water_pump_off()
-
-        return {
-            'status': 'completed',
-            'gpio_pin': self.WATER_PUMP_PIN,
-            'duration_seconds': run_seconds,
-            'start': start_result,
-            'stop': stop_result,
-            'breaker_pin': self.WATER_PUMP_BREAKER_PIN,
-            'rearm_required': self.water_pump_rearm_required,
-            'timestamp': datetime.now().isoformat(),
-        }
-
-    def read_soil_moisture(self) -> Dict:
-        """Read soil moisture sensor (Digital DO pin)"""
+        With no arguments, reads the primary/legacy sensor (SOIL_MOISTURE_PIN).
+        Pass `gpio_pin` (and optionally `zone`, a 1-based index) to read one of
+        several sensors configured via SOIL_MOISTURE_PINS.
+        """
         try:
             sensor_value = None
+            pin = gpio_pin if gpio_pin is not None else self.SOIL_MOISTURE_PIN
 
             if self.SOIL_SENSOR_MODE == 'analog_adc':
                 adc_value = int(self._read_adc_channel(self.SOIL_MOISTURE_ADC_CHANNEL))
@@ -547,16 +576,19 @@ class SensorMonitor:
                     },
                     'recommendation': recommendation,
                     'alert': alert,
+                    'zone': zone,
+                    'gpio_pin': pin,
                     'timestamp': datetime.now().isoformat()
                 }
 
             # For digital mode, check if sensor is properly connected
-            if not self._check_sensor_connection(self.SOIL_MOISTURE_PIN):
-                print(f"❌ Soil moisture sensor not detected on GPIO {self.SOIL_MOISTURE_PIN}")
+            if not self._check_sensor_connection(pin):
+                print(f"❌ Soil moisture sensor not detected on GPIO {pin}")
                 return {
-                    'error': f'Soil moisture sensor not connected. Check GPIO {self.SOIL_MOISTURE_PIN} connection.',
+                    'error': f'Soil moisture sensor not connected. Check GPIO {pin} connection.',
                     'status': 'disconnected',
-                    'gpio_pin': self.SOIL_MOISTURE_PIN,
+                    'zone': zone,
+                    'gpio_pin': pin,
                     'sensor_mode': 'digital_do',
                     'timestamp': datetime.now().isoformat()
                 }
@@ -564,31 +596,29 @@ class SensorMonitor:
             if GPIO_AVAILABLE:
                 try:
                     # Read exact value from digital sensor (DO pin)
-                    GPIO.setup(self.SOIL_MOISTURE_PIN, GPIO.IN)
-                    sensor_value = GPIO.input(self.SOIL_MOISTURE_PIN)
+                    GPIO.setup(pin, GPIO.IN)
+                    sensor_value = GPIO.input(pin)
                 except Exception as gpio_runtime_error:
                     print(f"⚠️  RPi.GPIO runtime read failed: {gpio_runtime_error}")
                     if GPIOZERO_AVAILABLE:
                         try:
-                            if self.soil_sensor_device is None:
-                                self.soil_sensor_device = DigitalInputDevice(self.SOIL_MOISTURE_PIN)
-                                print(f"✅ gpiozero DigitalInputDevice initialized on GPIO {self.SOIL_MOISTURE_PIN}")
-                            sensor_value = 1 if self.soil_sensor_device.value else 0
+                            device = self._get_soil_sensor_device(pin)
+                            sensor_value = 1 if device.value else 0
                         except Exception as fallback_error:
                             print(f"⚠️  gpiozero fallback failed: {fallback_error}")
             elif GPIOZERO_AVAILABLE:
                 try:
-                    if self.soil_sensor_device is None:
-                        self.soil_sensor_device = DigitalInputDevice(self.SOIL_MOISTURE_PIN)
-                        print(f"✅ gpiozero DigitalInputDevice initialized on GPIO {self.SOIL_MOISTURE_PIN}")
+                    device = self._get_soil_sensor_device(pin)
                     # gpiozero returns bool-like value: True(1) / False(0)
-                    sensor_value = 1 if self.soil_sensor_device.value else 0
+                    sensor_value = 1 if device.value else 0
                 except Exception as fallback_error:
                     print(f"⚠️  gpiozero read failed: {fallback_error}")
 
             if sensor_value is None:
                 return {
                     'error': 'GPIO backend unavailable. Unable to read actual sensor.',
+                    'zone': zone,
+                    'gpio_pin': pin,
                     'timestamp': datetime.now().isoformat()
                 }
 
@@ -604,7 +634,7 @@ class SensorMonitor:
                 recommendation = 'Soil is dry. Irrigation is needed.'
                 alert = True
 
-            print(f"🌱 Soil Moisture Sensor - GPIO {self.SOIL_MOISTURE_PIN}: raw={sensor_value}, state={state}")
+            print(f"🌱 Soil Moisture Sensor - GPIO {pin}: raw={sensor_value}, state={state}")
 
             return {
                 'value': int(sensor_value),
@@ -612,152 +642,59 @@ class SensorMonitor:
                 'status': status,
                 'state': state,
                 'raw_value': int(sensor_value),
-                'gpio_pin': self.SOIL_MOISTURE_PIN,
+                'zone': zone,
+                'gpio_pin': pin,
                 'sensor_mode': 'digital_do',
                 'recommendation': recommendation,
                 'alert': alert,
                 'timestamp': datetime.now().isoformat()
             }
-            
+
         except Exception as e:
             print(f"❌ Error reading soil moisture: {str(e)}")
             return {
                 'error': str(e),
+                'zone': zone,
+                'gpio_pin': gpio_pin if gpio_pin is not None else self.SOIL_MOISTURE_PIN,
                 'timestamp': datetime.now().isoformat()
             }
-    
-    def read_temperature_humidity(self) -> Dict:
-        """Read temperature and humidity sensor (DHT22)"""
-        try:
-            dht_source = 'simulation'
-            is_live = False
 
-            if DHT_AVAILABLE:
-                # Read from actual DHT sensor
-                humidity, temperature = Adafruit_DHT.read_retry(self.DHT_SENSOR, self.DHT_PIN)
-                
-                if humidity is None or temperature is None:
-                    # Sensor likely disconnected
-                    return {
-                        'error': 'DHT sensor not connected or failed to respond',
-                        'status': 'disconnected',
-                        'sensor': 'dht22',
-                        'timestamp': datetime.now().isoformat()
-                    }
-                dht_source = f'adafruit_dht_gpio{self.DHT_PIN}'
-                is_live = True
-            elif DHT_CIRCUITPY_AVAILABLE:
-                # Read using CircuitPython backend (recommended for newer Pi)
-                temperature = None
-                humidity = None
-                last_error = None
-                for _ in range(3):
-                    try:
-                        if self.dht_device is None:
-                            if self.DHT_PIN == 27:
-                                dht_pin = blinka_pin.D27
-                            elif self.DHT_PIN == 4:
-                                dht_pin = blinka_pin.D4
-                            else:
-                                raise Exception(f"Unsupported DHT pin for CircuitPython backend: GPIO {self.DHT_PIN}")
-                            self.dht_device = adafruit_dht.DHT22(dht_pin, use_pulseio=False)
+    def read_soil_moisture_all(self) -> Dict:
+        """Read all configured soil moisture sensors (one per zone).
 
-                        temperature = self.dht_device.temperature
-                        humidity = self.dht_device.humidity
-                        if humidity is not None and temperature is not None:
-                            break
-                    except Exception as read_error:
-                        last_error = read_error
-                        # adafruit_dht can leave the GPIO line claimed ("GPIO busy") after a
-                        # failed read; release it and force a fresh device next attempt
-                        # instead of reusing the same wedged object forever.
-                        try:
-                            if self.dht_device is not None:
-                                self.dht_device.exit()
-                        except Exception:
-                            pass
-                        self.dht_device = None
-                        time.sleep(0.5)
+        Returns a dict with a `zones` list (one reading per GPIO in
+        SOIL_MOISTURE_PINS) plus a `summary` describing whether irrigation
+        should run, based on SOIL_ZONE_WATER_POLICY ('any' | 'all' | 'majority').
+        """
+        zones = []
+        for idx, pin in enumerate(self.SOIL_MOISTURE_PINS, start=1):
+            zones.append(self.read_soil_moisture(gpio_pin=pin, zone=idx))
 
-                if humidity is None or temperature is None:
-                    # no response from sensor
-                    if last_error:
-                        raise Exception(str(last_error))
-                    return {
-                        'error': 'DHT sensor not connected or failed to respond',
-                        'status': 'disconnected',
-                        'sensor': 'dht22',
-                        'timestamp': datetime.now().isoformat()
-                    }
-                dht_source = f'live_dht22_gpio{self.DHT_PIN}'
-                is_live = True
-            else:
-                # No library available
-                if self.ALLOW_TH_SIMULATION:
-                    temperature = random.uniform(22, 35)
-                    humidity = random.uniform(40, 90)
-                else:
-                    return {
-                        'error': 'Temperature/humidity library not installed; sensor unavailable',
-                        'status': 'disconnected',
-                        'sensor': 'dht22',
-                        'timestamp': datetime.now().isoformat()
-                    }
-            
-            # Determine temperature status
-            if temperature < self.TEMP_THRESHOLDS['too_cold']:
-                temp_status = 'too_cold'
-                temp_recommendation = 'Temperature too cold for optimal growth.'
-                temp_alert = True
-            elif temperature > self.TEMP_THRESHOLDS['too_hot']:
-                temp_status = 'too_hot'
-                temp_recommendation = 'Temperature too hot! Provide shade.'
-                temp_alert = True
-            else:
-                temp_status = 'optimal'
-                temp_recommendation = 'Perfect temperature range.'
-                temp_alert = False
-            
-            # Determine humidity status
-            if humidity < self.HUMIDITY_THRESHOLDS['too_dry']:
-                humidity_status = 'too_dry'
-                humidity_recommendation = 'Air too dry. Increase humidity.'
-                humidity_alert = True
-            elif humidity > self.HUMIDITY_THRESHOLDS['too_humid']:
-                humidity_status = 'too_humid'
-                humidity_recommendation = 'Too humid! Improve ventilation.'
-                humidity_alert = True
-            else:
-                humidity_status = 'optimal'
-                humidity_recommendation = 'Perfect humidity level.'
-                humidity_alert = False
-            
-            return {
-                'temperature': {
-                    'value': round(temperature, 1),
-                    'unit': '°C',
-                    'status': temp_status,
-                    'recommendation': temp_recommendation,
-                    'alert': temp_alert
-                },
-                'humidity': {
-                    'value': round(humidity, 1),
-                    'unit': '%',
-                    'status': humidity_status,
-                    'recommendation': humidity_recommendation,
-                    'alert': humidity_alert
-                },
-                'sensor_source': dht_source,
-                'sensor_live': is_live,
-                'gpio_pin': self.DHT_PIN,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            return {
-                'error': str(e),
-                'timestamp': datetime.now().isoformat()
-            }
+        valid_zones = [z for z in zones if 'error' not in z]
+        dry_zones = [z for z in valid_zones if z.get('state') == 'DRY']
+        wet_zones = [z for z in valid_zones if z.get('state') == 'WET']
+
+        watering_recommended = False
+        if valid_zones:
+            if self.SOIL_ZONE_WATER_POLICY == 'all':
+                watering_recommended = len(dry_zones) == len(valid_zones)
+            elif self.SOIL_ZONE_WATER_POLICY == 'majority':
+                watering_recommended = len(dry_zones) > len(valid_zones) / 2
+            else:  # 'any' (default)
+                watering_recommended = len(dry_zones) > 0
+
+        return {
+            'zones': zones,
+            'summary': {
+                'total_zones': len(zones),
+                'valid_zones': len(valid_zones),
+                'dry_zones': len(dry_zones),
+                'wet_zones': len(wet_zones),
+                'policy': self.SOIL_ZONE_WATER_POLICY,
+                'watering_recommended': watering_recommended,
+            },
+            'timestamp': datetime.now().isoformat()
+        }
     
     def _read_adc_channel(self, channel: int) -> int:
         """
@@ -768,64 +705,57 @@ class SensorMonitor:
         return random.randint(200, 900)
     
     def save_reading(self, sensor_type: str, data: Dict):
-        """Save sensor reading to file"""
+        """Serialize appends and atomically replace the daily sensor file."""
         try:
-            filename = f"{sensor_type}_{datetime.now().strftime('%Y%m%d')}.json"
-            filepath = os.path.join(self.data_folder, filename)
-            
-            # Load existing data
-            readings = []
-            if os.path.exists(filepath):
-                with open(filepath, 'r') as f:
-                    readings = json.load(f)
-            
-            # Append new reading
-            readings.append(data)
-            
-            # Keep only last 1000 readings per day
-            readings = readings[-1000:]
-            
-            # Save
-            with open(filepath, 'w') as f:
-                json.dump(readings, f, indent=2)
-                
-        except Exception as e:
-            print(f"Error saving reading: {e}")
+            with self._reading_lock:
+                filename = f"{sensor_type}_{datetime.now().strftime('%Y%m%d')}.json"
+                filepath = os.path.join(self.data_folder, filename)
+                readings = []
+                if os.path.exists(filepath):
+                    with open(filepath, encoding='utf-8') as stream:
+                        readings = json.load(stream)
+                readings.append(data)
+                write_json_atomic(filepath, readings)
+        except Exception as error:
+            print(f"Error saving reading: {error}")
     
-    def diagnose_soil_moisture_sensor(self) -> Dict:
+    def diagnose_soil_moisture_sensor(self, gpio_pin: Optional[int] = None) -> Dict:
         """
         Diagnostic function to test soil moisture sensor connectivity.
         Provides detailed information about GPIO access and sensor readings.
+
+        Defaults to the primary sensor (SOIL_MOISTURE_PIN); pass `gpio_pin`
+        to diagnose a specific zone sensor instead.
         """
+        pin = gpio_pin if gpio_pin is not None else self.SOIL_MOISTURE_PIN
         diagnosis = {
             'gpio_backend': 'unavailable',
-            'gpio_pin': self.SOIL_MOISTURE_PIN,
+            'gpio_pin': pin,
             'sensor_mode': self.SOIL_SENSOR_MODE,
             'readings': [],
             'diagnosis': 'Unable to perform diagnosis',
             'recommendations': []
         }
-        
+
         try:
             if not GPIO_AVAILABLE and not GPIOZERO_AVAILABLE:
                 diagnosis['diagnosis'] = 'GPIO backend not available'
                 diagnosis['recommendations'].append('Install RPi.GPIO or gpiozero package')
                 return diagnosis
-            
+
             diagnosis['gpio_backend'] = 'RPi.GPIO' if GPIO_AVAILABLE else 'gpiozero'
-            
+
             # Try to read from the sensor multiple times
             successful_reads = 0
             for i in range(10):
                 try:
                     if GPIO_AVAILABLE:
-                        GPIO.setup(self.SOIL_MOISTURE_PIN, GPIO.IN)
-                        value = GPIO.input(self.SOIL_MOISTURE_PIN)
+                        GPIO.setup(pin, GPIO.IN)
+                        value = GPIO.input(pin)
                     else:
-                        if self.soil_sensor_device is None:
-                            self.soil_sensor_device = DigitalInputDevice(self.SOIL_MOISTURE_PIN)
-                        value = 1 if self.soil_sensor_device.value else 0
-                    
+                        device = self._get_soil_sensor_device(pin)
+                        value = 1 if device.value else 0
+
                     diagnosis['readings'].append({
                         'attempt': i + 1,
                         'value': value,
@@ -839,7 +769,7 @@ class SensorMonitor:
                     })
             
             if successful_reads == 0:
-                diagnosis['diagnosis'] = 'CRITICAL: Cannot access GPIO pin {self.SOIL_MOISTURE_PIN}'
+                diagnosis['diagnosis'] = f'CRITICAL: Cannot access GPIO pin {pin}'
                 diagnosis['recommendations'] = [
                     'Check if GPIO pin is correctly configured',
                     'Verify Raspberry Pi GPIO is enabled',
@@ -879,7 +809,17 @@ class SensorMonitor:
         except Exception as e:
             diagnosis['diagnosis'] = f'Error during diagnosis: {str(e)}'
             return diagnosis
-    
+
+    def diagnose_all_soil_moisture_sensors(self) -> Dict:
+        """Run diagnose_soil_moisture_sensor() for every configured zone sensor."""
+        return {
+            'zones': [
+                {'zone': idx, **self.diagnose_soil_moisture_sensor(gpio_pin=pin)}
+                for idx, pin in enumerate(self.SOIL_MOISTURE_PINS, start=1)
+            ],
+            'timestamp': datetime.now().isoformat()
+        }
+
     def get_readings(self, sensor_type: str, hours: int = 24) -> List[Dict]:
         """Get readings for the specified time period"""
         try:
@@ -1200,17 +1140,16 @@ class SensorMonitor:
 
     def _load_users(self) -> Dict:
         try:
-            path = os.path.join(self._repo_root(), 'users.json')
-            if not os.path.exists(path):
-                return {}
-            with open(path, 'r') as f:
-                return json.load(f)
+            from core.auth import load_users
+            return load_users()
         except Exception:
             return {}
 
     def _load_notifications(self) -> Dict:
         try:
-            path = os.path.join(self._repo_root(), 'notifications.json')
+            path = os.path.join(self._repo_root(), 'data', 'notifications.json')
+            if not os.path.exists(path):
+                path = os.path.join(self._repo_root(), 'notifications.json')
             if not os.path.exists(path):
                 return {}
             with open(path, 'r') as f:
@@ -1220,9 +1159,8 @@ class SensorMonitor:
 
     def _save_notifications(self, data: Dict):
         try:
-            path = os.path.join(self._repo_root(), 'notifications.json')
-            with open(path, 'w') as f:
-                json.dump(data, f, indent=2)
+            path = os.path.join(self._repo_root(), 'data', 'notifications.json')
+            write_json_atomic(path, data)
         except Exception as e:
             print(f"⚠️  Failed to save notifications file: {e}")
 
@@ -1253,6 +1191,8 @@ class SensorMonitor:
         notifications = self._load_notifications()
 
         for email, profile in users.items():
+            if profile.get('role') == 'staff' and profile.get('status') != 'approved':
+                continue
             # Determine consecutive dry days
             today = datetime.now().date()
             consecutive = 0
@@ -1267,7 +1207,12 @@ class SensorMonitor:
                     with open(filepath, 'r') as f:
                         readings = json.load(f)
                     # If any reading that day is dry -> count the day
-                    day_has_dry = any((r.get('status') == 'dry' or r.get('state') == 'DRY') for r in readings)
+                    day_has_dry = any(
+                        not r.get('error')
+                        and not str(r.get('data_source', '')).lower().startswith('simulated')
+                        and (r.get('status') == 'dry' or r.get('state') == 'DRY')
+                        for r in readings if isinstance(r, dict)
+                    )
                     if day_has_dry:
                         consecutive += 1
                     else:

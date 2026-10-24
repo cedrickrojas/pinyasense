@@ -9,7 +9,10 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/password-toggle.css') }}">
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <title>Login - PiñaSense</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -24,10 +27,12 @@
             background: linear-gradient(135deg, #0f172a 0%, #1e2d4a 100%);
             background-attachment: fixed;
             min-height: 100vh;
+            min-height: 100svh;
             display: flex;
             align-items: center;
             justify-content: center;
             color: #1e293b;
+            padding: 1rem;
         }
 
         .auth-container {
@@ -283,17 +288,53 @@
         }
 
         @media (max-width: 768px) {
+            body {
+                align-items: flex-start;
+                padding: max(1rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+            }
+
+            .auth-container {
+                width: 100%;
+                margin: auto 0;
+            }
+
             .form-box {
-                padding: 2rem 1.5rem;
+                padding: 1.5rem 1rem;
+                border-radius: 12px;
             }
 
             .brand-title {
                 font-size: 1.5rem;
             }
 
+            .logo-section {
+                margin-bottom: 1.5rem;
+            }
+
+            .form-group {
+                margin-bottom: 1.25rem;
+            }
+
+            .form-input {
+                min-height: 48px;
+                font-size: 16px;
+            }
+
+            .form-options {
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 0.75rem;
+                margin-bottom: 1.25rem;
+            }
+
+            .submit-btn {
+                min-height: 48px;
+            }
+
             .modal-content {
                 padding: 1.5rem;
                 max-width: 95%;
+                max-height: calc(100svh - 2rem);
             }
 
             .modal-header h2 {
@@ -339,10 +380,17 @@
                             type="password" 
                             id="password" 
                             name="password" 
-                            class="form-input" 
+                            class="form-input password-input"
                             placeholder="Enter your password"
                             required
                         >
+                        <button type="button" class="password-toggle" aria-label="Show password" aria-controls="password" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+                                <circle cx="12" cy="12" r="3" />
+                                <path class="eye-slash" d="m3 3 18 18" />
+                            </svg>
+                        </button>
                     </div>
                 </div>
 
@@ -434,7 +482,7 @@
             padding: 2rem;
             max-width: 450px;
             width: 90%;
-            max-height: 600px;
+            max-height: min(600px, calc(100svh - 2rem));
             overflow-y: auto;
             border: 1px solid rgba(255, 255, 255, 0.1);
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -574,8 +622,30 @@
     </style>
 
     <script>
+        function dismissMobileKeyboard() {
+            const activeElement = document.activeElement;
+            if (activeElement && typeof activeElement.blur === 'function') {
+                activeElement.blur();
+            }
+            window.scrollTo(0, 0);
+        }
+
+        function lockLoginInputs() {
+            document.querySelectorAll('#loginForm input').forEach((input) => {
+                input.setAttribute('readonly', 'readonly');
+                input.blur();
+            });
+            dismissMobileKeyboard();
+        }
+
+        const pageMessage = {{ (message or '')|tojson }};
+        if (pageMessage) {
+            showAlert(pageMessage, 'error');
+        }
+
         document.getElementById('loginForm').addEventListener('submit', async function(e) {
             e.preventDefault();
+            dismissMobileKeyboard();
             
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
@@ -600,9 +670,16 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    if (data.user && data.user.role === 'staff' && data.user.status !== 'approved') {
+                        showAlert(data.message || 'Your account is still waiting for Admin approval.', 'error');
+                        return;
+                    }
                     showAlert('Login successful! Redirecting...', 'success');
+                    lockLoginInputs();
                     setTimeout(() => {
-                        window.location.href = '/dashboard';
+                        window.location.replace(data.user && data.user.role === 'super_admin'
+                            ? '/super-admin/dashboard'
+                            : '/dashboard');
                     }, 1000);
                 } else {
                     showAlert(data.message || 'Login failed', 'error');

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin Dashboard - PiñaSense</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <style>
+        :root { --navy:#081426; --panel:#10243b; --line:rgba(148,163,184,.18); --text:#e7f0f7; --muted:#91a5b8; --green:#32d296; --cyan:#54c7e8; --amber:#f6c453; }
+        * { box-sizing:border-box; } body { margin:0; min-height:100vh; background:radial-gradient(circle at 80% 0%,#183957 0,transparent 35%),var(--navy); color:var(--text); font-family:Segoe UI,Arial,sans-serif; }
+        .layout { display:grid; grid-template-columns:245px minmax(0,1fr); min-height:100vh; } aside { position:sticky; top:0; align-self:start; height:100vh; padding:24px 15px; background:rgba(5,16,31,.95); border-right:1px solid var(--line); width:245px; overflow-y:auto; overflow-x:hidden; } .brand { display:flex; gap:10px; align-items:center; padding:0 10px 24px; border-bottom:1px solid var(--line); } .brand i { color:var(--green); font-size:1.7rem; } .brand strong { letter-spacing:.08em; display:block; } .brand small { color:var(--cyan); }
+        nav { margin-top:20px; display:flex; flex-direction:column; min-height:calc(100vh - 155px); padding-bottom:16px; } nav a { display:flex; gap:11px; padding:11px 12px; margin:3px 0; border-radius:7px; color:var(--muted); text-decoration:none; transition:all .2s ease; } nav a:hover, nav a.active { color:var(--text); background:rgba(84,199,232,.12); box-shadow:inset 0 0 0 1px rgba(84,199,232,.2); } nav i { width:18px; text-align:center; } .nav-section { color:#607890; font-size:.66rem; font-weight:700; letter-spacing:.16em; margin:20px 12px 6px; } .nav-spacer { flex:1; }
+        main { width:100%; max-width:1400px; padding:35px clamp(18px,4vw,55px); } .eyebrow { color:var(--cyan); font-size:.73rem; letter-spacing:.16em; text-transform:uppercase; font-weight:700; } h1 { margin:7px 0; font-size:clamp(1.7rem,3vw,2.6rem); } .muted { color:var(--muted); }
+        .top { display:flex; justify-content:space-between; gap:15px; align-items:start; margin-bottom:28px; } .chip { color:var(--green); border:1px solid rgba(50,210,150,.35); padding:9px 12px; border-radius:7px; font-size:.8rem; }
+        .grid { display:grid; gap:15px; } .cards { grid-template-columns:repeat(4,minmax(140px,1fr)); } .two { grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:15px; } .card { background:linear-gradient(145deg,rgba(20,44,70,.95),rgba(13,31,51,.95)); border:1px solid var(--line); border-radius:10px; padding:19px; } .metric-head { color:var(--muted); font-size:.82rem; display:flex; justify-content:space-between; } .metric-head i { color:var(--cyan); } .value { font-size:2rem; font-weight:800; margin-top:18px; }
+        .card h2 { font-size:1rem; margin:0 0 14px; } .status { display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--line); color:var(--muted); } .status:last-child { border-bottom:0; } .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green); margin-right:7px; } .dot.warn { background:var(--amber); }
+        .actions { display:flex; flex-wrap:wrap; gap:9px; } .actions a { text-decoration:none; padding:10px 12px; border:1px solid var(--line); border-radius:7px; color:var(--text); font-size:.85rem; } .actions a.primary { background:#167c68; border-color:#2bbf96; } .activity { display:grid; gap:10px; } .activity div { border-bottom:1px solid var(--line); padding:8px 0; } .activity div:last-child { border:0; }
+        .mobile-menu-toggle, .sidebar-backdrop { display:none; }
+        @media(max-width:850px){
+            html, body { overflow-x:hidden; }
+            .layout { display:block; min-height:100svh; }
+            aside { position:fixed; inset:0 auto 0 0; width:min(82vw,280px); height:100svh; padding:14px; transform:translateX(-100%); transition:transform .25s ease; z-index:20; }
+            aside.mobile-open { transform:translateX(0); }
+            nav { display:flex; overflow-y:auto; gap:4px; margin-top:12px; min-height:auto; }
+            nav a { white-space:nowrap; }
+            main { width:100%; max-width:none; padding:64px 16px 24px; }
+            .mobile-menu-toggle { display:flex; position:fixed; top:12px; left:12px; align-items:center; justify-content:center; width:44px; height:44px; border:1px solid rgba(84,199,232,.35); border-radius:8px; background:#102b45; color:var(--text); z-index:30; font-size:1.05rem; cursor:pointer; touch-action:manipulation; }
+            .sidebar-backdrop { position:fixed; inset:0; background:rgba(2,6,23,.68); z-index:15; }
+            body.mobile-nav-open .sidebar-backdrop { display:block; }
+            .cards { grid-template-columns:repeat(2,minmax(0,1fr)); }
+        }
+        @media(max-width:600px){ .top{flex-direction:column}.two{grid-template-columns:1fr}.cards{gap:10px}.value{font-size:1.5rem}.chip{align-self:flex-start}.card{padding:15px}.actions a{display:block;text-align:center;width:100%;} }
+    </style>
+</head>
+<body>
+<button class="mobile-menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" onclick="toggleAdminNav()"><i class="fas fa-bars"></i></button>
+<div class="sidebar-backdrop" onclick="toggleAdminNav()"></div>
+<div class="layout">
+<aside><div class="brand"><i class="fas fa-leaf"></i><div><strong>PINYASENSE</strong><small>Super Admin</small></div></div><nav><div class="nav-section">MAIN</div><a class="active" href="/super-admin/dashboard"><i class="fas fa-grid-2"></i>Dashboard</a><div class="nav-section">MANAGEMENT</div><a href="/admin/staff-requests"><i class="fas fa-users"></i>Staff Accounts</a><a href="/admin/notifications"><i class="fas fa-bell"></i>Notifications</a><a href="/admin/activity-logs"><i class="fas fa-list-check"></i>Activity Logs</a><div class="nav-section">MONITORING</div><a href="/admin/alerts"><i class="fas fa-triangle-exclamation"></i>Alerts</a><div class="nav-section">ANALYTICS</div><a href="/admin/analytics"><i class="fas fa-chart-line"></i>System Analytics</a><a href="/admin/reports"><i class="fas fa-file-lines"></i>Reports</a><div class="nav-section">SYSTEM</div><a href="/admin/settings"><i class="fas fa-sliders"></i>System Settings</a><a href="/dashboard"><i class="fas fa-seedling"></i>Operations View</a><span class="nav-spacer"></span><a href="#" onclick="logout();return false;"><i class="fas fa-right-from-bracket"></i>Logout</a></nav></aside>
+<main><div class="top"><div><div class="eyebrow">System control center</div><h1>Super Admin Dashboard</h1><div class="muted">Full platform access and staff account management.</div></div><div class="chip"><i class="fas fa-shield-halved"></i> SUPER ADMIN</div></div>
+<section class="grid cards" id="staffCards"><div class="card">Loading...</div></section>
+<section class="grid two"><div class="card"><h2>Farm Monitoring</h2><div id="farmStatus">Loading live sensor state...</div></div><div class="card"><h2>System Overview</h2><div id="systemStatus">Loading system state...</div></div></section>
+<section class="grid two"><div class="card"><h2>AI Detection Statistics</h2><div id="aiStatus"></div></div><div class="card"><h2>Quick Actions</h2><div class="actions"><a class="primary" href="/admin/staff-requests">Review Staff Accounts</a><a href="/sensors">View Sensors</a><a href="/diseases">View Diseases</a><a href="/forecast">View Reports</a></div></div></section>
+<section class="grid two"><div class="card"><h2>Recent Staff Accounts</h2><div class="activity" id="staffList">Loading...</div></div><div class="card"><h2>Account Policy</h2><div class="muted">New public registrations are Staff accounts and remain pending. Only an existing authorized admin can create a Super Admin account. Approved Staff retain access to all existing operational features and IoT devices.</div></div></section>
+</main></div>
+<script>
+if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+window.scrollTo(0, 0);
+const metric=(label,value,icon)=>`<div class="card"><div class="metric-head"><span>${label}</span><i class="fas ${icon}"></i></div><div class="value">${value ?? 'N/A'}</div></div>`;
+const status=(label,value,warn=false)=>`<div class="status"><span>${label}</span><strong><span class="dot ${warn?'warn':''}"></span>${value}</strong></div>`;
+async function loadDashboard(){
+    const [staffResponse, statsResponse, sensorResponse, pumpResponse] = await Promise.all([fetch('/api/admin/staff-requests'),fetch('/api/stats'),fetch('/api/sensors/soil-moisture/arduino-zones'),fetch('/api/water-pump/status')]);
+    const staffData=await staffResponse.json(), stats=await statsResponse.json(), sensor=await sensorResponse.json(), pump=await pumpResponse.json();
+    const staff=staffData.staff||[]; const pending=staff.filter(x=>x.status==='pending').length; const approved=staff.filter(x=>x.status==='approved').length; const inactive=staff.filter(x=>x.status==='inactive').length;
+    document.getElementById('staffCards').innerHTML=[metric('Total Staff',staff.length,'fa-users'),metric('Pending Requests',pending,'fa-user-clock'),metric('Approved Staff',approved,'fa-user-check'),metric('Inactive Staff',inactive,'fa-user-slash')].join('');
+    const zones=Array.isArray(sensor.zones)?sensor.zones.filter(zone=>zone&&!zone.error&&Number.isFinite(Number(zone.value))):[];
+    const average=zones.length?Math.round(zones.reduce((total,zone)=>total+Number(zone.value),0)/zones.length):null;
+    const soilIsOnline=sensor.source==='arduino_serial'&&zones.length>0;
+    const soilState=soilIsOnline?`${average}% · ONLINE (${zones.length}/4 zones)`:sensor.source==='simulated_daily'?`${average}% · SIMULATED`:'Offline';
+    document.getElementById('farmStatus').innerHTML=status('Soil Moisture',soilState,!soilIsOnline)+status('Pump',pump.status?pump.status.toUpperCase():'N/A');
+    document.getElementById('systemStatus').innerHTML=status('Database','Available')+status('AI Detection','Available')+status('Irrigation',pump.error?'Degraded':'Online',!!pump.error);
+    const counts=stats.disease_count||{}; const healthy=counts.Healthy||0; document.getElementById('aiStatus').innerHTML=status('Total Detections',stats.total_detections||0)+status('Healthy',healthy)+status('Diseased',(stats.total_detections||0)-healthy);
+    document.getElementById('staffList').innerHTML=staff.slice(-6).reverse().map(x=>`<div><strong>${x.fullname||x.email}</strong><br><small class="muted">${x.email} · ${x.status}</small></div>`).join('')||'<div class="muted">No staff accounts.</div>';
+}
+async function logout(){await fetch('/api/logout',{method:'POST'});location='/login';} loadDashboard().catch(error=>console.error(error));
+function toggleAdminNav(){
+    const sidebar=document.querySelector('aside');
+    const toggle=document.querySelector('.mobile-menu-toggle');
+    const open=sidebar.classList.toggle('mobile-open');
+    document.body.classList.toggle('mobile-nav-open',open);
+    toggle.setAttribute('aria-expanded',String(open));
+    toggle.innerHTML=`<i class="fas fa-${open?'xmark':'bars'}"></i>`;
+}
+document.querySelectorAll('aside a').forEach(link=>link.addEventListener('click',()=>{
+    if(window.matchMedia('(max-width: 850px)').matches && document.body.classList.contains('mobile-nav-open')) toggleAdminNav();
+}));
+</script>
+</body>
+</html>

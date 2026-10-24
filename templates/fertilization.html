@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
     <title>Fertilization Guide - AgriPinya</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -188,19 +189,12 @@
                 <i class="fas fa-leaf"></i>
                 <span data-i18n="brand">AgriPinya</span>
             </a>
-            <div class="language-selector">
-                <select id="languageSelect" onchange="changeLanguage()">
-                    <option value="en">English</option>
-                    <option value="tl">Tagalog</option>
-                    <option value="es">Español</option>
-                </select>
-            </div>
         </div>
         <ul class="sidebar-menu">
             <li><a href="/dashboard"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
             <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
             <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
-            <li><a href="/sensors/water-pump"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <li><a href="/sensors/water-pump"><i class="fas fa-faucet"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
             <div class="sidebar-section">Agriculture</div>
             <li><a href="/fertilization" class="active"><i class="fas fa-seedling"></i> Fertilization</a></li>
             <li><a href="/forecast"><i class="fas fa-chart-line"></i> Forecast</a></li>

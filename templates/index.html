@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="PinaSense">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/pinya-icon.svg') }}">
     <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
     <script>
         // Prevent the browser from restoring a stale scroll position (e.g. deep in the
@@ -20,6 +21,7 @@
     <title data-i18n="page_title">PiñaSense - Pineapple Disease Detection System</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="{{ url_for('static', filename='js/html-utils.js') }}"></script>
 </head>
 <body>
     <!-- Sidebar Toggle Button (Mobile) -->
@@ -34,19 +36,12 @@
                 <i class="fas fa-leaf"></i>
                 <span data-i18n="brand">PiñaSense</span>
             </a>
-            <div class="language-selector">
-                <select id="languageSelect" onchange="changeLanguage()">
-                    <option value="en">English</option>
-                    <option value="tl">Tagalog</option>
-                    <option value="es">Español</option>
-                </select>
-            </div>
         </div>
         <ul class="sidebar-menu">
             <li><a href="/dashboard" class="active"><i class="fas fa-home"></i> <span class="menu-text" data-i18n="home">Home</span></a></li>
             <li><a href="/sensors"><i class="fas fa-microchip"></i> <span class="menu-text" data-i18n="sensors">Sensors</span></a></li>
             <li><a href="/sensors/soil-moisture"><i class="fas fa-tint"></i> <span class="menu-text" data-i18n="soil_moisture">Soil Moisture</span></a></li>
-            <li><a href="/sensors/water-pump"><i class="fas fa-faucet-drip"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
+            <li><a href="/sensors/water-pump"><i class="fas fa-faucet"></i> <span class="menu-text" data-i18n="water_pump">Water Pump</span></a></li>
             <div class="sidebar-section" data-i18n="agriculture_section">Agriculture</div>
             <li><a href="/forecast"><i class="fas fa-chart-line"></i> <span class="menu-text" data-i18n="forecast">Forecast</span></a></li>
             <li><a href="/diseases"><i class="fas fa-virus"></i> <span class="menu-text" data-i18n="diseases">Diseases</span></a></li>
@@ -68,17 +63,17 @@
             <div class="hero-stats">
                 <div class="stat">
                     <i class="fas fa-camera"></i>
-                    <span id="totalDetections">0</span>
+                    <span id="totalDetections" aria-live="polite">&hellip;</span>
                     <p data-i18n="total_detections_label">Total Detections</p>
                 </div>
                 <div class="stat">
                     <i class="fas fa-leaf"></i>
-                    <span id="healthyCount">0</span>
+                    <span id="healthyCount" aria-live="polite">&hellip;</span>
                     <p data-i18n="healthy_label">Healthy</p>
                 </div>
                 <div class="stat">
                     <i class="fas fa-virus"></i>
-                    <span id="diseaseCount">0</span>
+                    <span id="diseaseCount" aria-live="polite">&hellip;</span>
                     <p data-i18n="diseased_label">Diseased</p>
                 </div>
             </div>
